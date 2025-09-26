@@ -11,7 +11,7 @@ Config keys:
 Outputs:
   returns a dict with any of the keys 'pass', 'divert', 'trigger' containing the packet routed.
 """
-from future import annotations
+from __future__ import annotations
 from typing import Any, Dict, List
 
 # Copy of the minimal Divider implementation
