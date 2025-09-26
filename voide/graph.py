@@ -1,0 +1,89 @@
+"""Holds nodes and edges, supports JSON serialization and topo sorting."""
+from __future__ import annotations
+from dataclasses import dataclass, field
+from typing import Any, Dict, List
+import json
+
+from voide.errors import CycleError
+
+@dataclass
+class Node:
+    id: str
+    type_name: str
+    config: Dict[str, Any]
+    inputs: Dict[str, Any] = field(default_factory=dict)
+    outputs: Dict[str, Any] = field(default_factory=dict)
+
+@dataclass
+class Edge:
+    from_node: str
+    from_port: str
+    to_node: str
+    to_port: str
+
+class Graph:
+    """Container of nodes and edges, with JSON (de)serialization and topo sort."""
+
+    def __init__(self) -> None:
+        self.nodes: Dict[str, Node] = {}
+        self.edges: List[Edge] = []
+
+    def add_node(self, node: Node) -> None:
+        if node.id in self.nodes:
+            raise CycleError(f"Duplicate node id: {node.id}")
+        self.nodes[node.id] = node
+
+    def add_edge(self, edge: Edge) -> None:
+        if edge.from_node not in self.nodes or edge.to_node not in self.nodes:
+            raise CycleError(f"Unknown node in edge: {edge}")
+        self.edges.append(edge)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "nodes": [vars(n) for n in self.nodes.values()],
+            "edges": [vars(e) for e in self.edges],
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> Graph:
+        g = cls()
+        for nd in data.get("nodes", []):
+            node = Node(
+                id=nd["id"],
+                type_name=nd["type_name"],
+                config=nd.get("config", {}),
+            )
+            g.add_node(node)
+        for ed in data.get("edges", []):
+            g.add_edge(Edge(**ed))
+        return g
+
+    def topo_sort(self) -> List[Node]:
+        """
+        Kahn’s algorithm: return nodes in build order or raise CycleError.
+        """
+        # Build dependency map: node_id -> set of predecessor node_ids
+        deps: Dict[str, set[str]] = {nid: set() for nid in self.nodes}
+        for e in self.edges:
+            deps[e.to_node].add(e.from_node)
+
+        # Start with nodes that have no dependencies
+        ready = [nid for nid, ds in deps.items() if not ds]
+        result: List[Node] = []
+
+        while ready:
+            nid = ready.pop(0)
+            result.append(self.nodes[nid])
+            # Remove this node’s edges
+            for e in list(self.edges):
+                if e.from_node == nid:
+                    tgt = e.to_node
+                    deps[tgt].remove(nid)
+                    if not deps[tgt]:
+                        ready.append(tgt)
+
+        if len(result) != len(self.nodes):
+            raise CycleError("Graph has cycles or missing dependencies")
+
+        return result
+

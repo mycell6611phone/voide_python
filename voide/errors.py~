@@ -1,0 +1,12 @@
+# File: workspace/voide/errors.py
+"""Custom exceptions for VOIDE graph engine."""
+
+
+class GraphError(Exception):
+"""Base class for graph-related errors."""
+pass
+
+
+class CycleError(GraphError):
+"""Raised when a cycle is detected in the graph."""
+pass

@@ -1,0 +1,27 @@
+
+from typing import Dict
+
+from voide.chunks.prompt import build as build_prompt
+from voide.chunks.llm import build as build_llm
+
+def make_container() -> Dict:
+    return {"ops": {}, "tools": {}, "config": {}}
+
+def test_prompt_renders():
+    c = make_container()
+    build_prompt(c)
+    op = c["ops"]["Prompt"]
+    msg = {"task": "reverse a string"}
+    cfg = {"template": "Summarize {task}"}
+    out = op(msg, cfg, c)
+    assert out["prompt"] == "Summarize reverse a string"
+
+def test_llm_echo_completion():
+    c = make_container()
+    build_llm(c)
+    op = c["ops"]["LLM"]
+    msg = {"prompt": "Say hi"}
+    out = op(msg, {"backend": "echo", "forward_input_with_response": True}, c)
+    assert out["completion"].startswith("ECHO:")
+    assert out.get("input") == msg
+

@@ -1,0 +1,21 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+from voide.graph import Graph, Node, Edge
+from voide_ui.state import save_graph, load_graph
+
+def test_state_save_load(tmp_path: Path):
+    g = Graph()
+    g.add_node(Node(id="a", type_name="Prompt", config={"template": "Hello {task}"}))
+    g.add_node(Node(id="b", type_name="LLM", config={"backend": "echo"}))
+    g.add_edge(Edge("a", "prompt", "b", "prompt"))
+    pos = {"a": (100, 120), "b": (260, 120)}
+
+    p = tmp_path / "g.json"
+    save_graph(str(p), g, pos)
+
+    g2, pos2 = load_graph(str(p))
+    assert set(g2.nodes.keys()) == {"a", "b"}
+    assert len(g2.edges) == 1
+    assert pos2["a"] == (100, 120) and pos2["b"] == (260, 120)

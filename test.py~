@@ -1,0 +1,224 @@
+import os
+
+# Directory for tests
+tests_dir = "/mnt/data/workspace/tests"
+os.makedirs(tests_dir, exist_ok=True)
+
+# Test files and their contents
+tests = {
+    "test_assemble.py": """from future import annotations
+
+from pathlib import Path
+import textwrap
+
+import importlib
+
+from voide.assemble import assemble, UnresolvedDependenciesError
+
+def write_chunk(dir: Path, name: str, body: str) -> Path:
+    p = dir / f"{name}.py"
+    p.write_text(textwrap.dedent(body))
+    return p
+
+def test_assemble_simple(tmp_path):
+    chunks = tmp_path / "chunks"
+    chunks.mkdir()
+
+    # Provider chunk A
+    write_chunk(
+        chunks,
+        "a",
+        \"""
+provides = ["A"]
+requires = []
+def build(container):
+    container["A"] = 1
+\"""
+    )
+
+    # Consumer chunk B
+    write_chunk(
+        chunks,
+        "b",
+        \"""
+provides = ["B"]
+requires = ["A"]
+def build(container):
+    container["B"] = container["A"] + 1
+\"""
+    )
+
+    c = assemble(chunks_glob=str(chunks / "*.py"))
+    assert c["A"] == 1
+    assert c["B"] == 2
+
+def test_unresolved_dependencies(tmp_path):
+    chunks = tmp_path / "chunks"
+    chunks.mkdir()
+
+    # A chunk that requires a missing key
+    write_chunk(
+        chunks,
+        "needs_x",
+        \"""
+provides = ["Y"]
+requires = ["X"]
+def build(container):
+    container["Y"] = 42
+\"""
+    )
+
+    try:
+        assemble(chunks_glob=str(chunks / "*.py"))
+        assert False, "expected UnresolvedDependenciesError"
+    except UnresolvedDependenciesError as e:
+        msg = str(e)
+        assert "X" in msg
+""",
+    "test_graph_compile.py": """import pytest
+from voide.graph import Graph, Node, Edge
+from voide.compiler import compile
+from voide.errors import CycleError
+
+def test_graph_serialization_roundtrip():
+    g = Graph()
+    n = Node(id="n1", type_name="A", config={})
+    g.add_node(n)
+    e = Edge(from_node="n1", from_port="out", to_node="n1", to_port="in")
+    g.add_edge(e)
+    d = g.to_dict()
+    g2 = Graph.from_dict(d)
+    assert len(g2.nodes) == 1 and len(g2.edges) == 1
+
+def test_topo_sort_cycle():
+    g = Graph()
+    g.add_node(Node(id="a", type_name="A", config={}))
+    g.add_node(Node(id="b", type_name="B", config={}))
+    g.add_edge(Edge("a", "out", "b", "in"))
+    g.add_edge(Edge("b", "out", "a", "in"))
+    with pytest.raises(CycleError):
+        g.topo_sort()
+
+def test_runner_simple_chain():
+    def op_a(msg, cfg, c): return {"x": msg.get("x", 0) * 2}
+    def op_b(msg, cfg, c): return {"y": msg.get("x", 0) + 3}
+    container = {"ops": {"A": op_a, "B": op_b}}
+    g = Graph()
+    g.add_node(Node(id="n1", type_name="A", config={}))
+    g.add_node(Node(id="n2", type_name="B", config={}))
+    g.add_edge(Edge("n1", "out", "n2", "in"))
+    runner = compile(g, container)
+    out = runner.run({"x": 5})
+    assert out["n1"]["x"] == 10
+    assert out["n2"]["y"] == 13
+
+def test_runner_fan_in_fan_out():
+    def op_a(msg, cfg, c): return {"v": cfg.get("add", 1)}
+    def op_c(msg, cfg, c): return {"sum": sum(msg.get(k, 0) for k in msg)}
+    container = {"ops": {"A": op_a, "C": op_c}}
+    g = Graph()
+    g.add_node(Node(id="a1", type_name="A", config={"add": 2}))
+    g.add_node(Node(id="a2", type_name="A", config={"add": 5}))
+    g.add_node(Node(id="c", type_name="C", config={}))
+    g.add_edge(Edge("a1", "out", "c", "v1"))
+    g.add_edge(Edge("a2", "out", "c", "v2"))
+    runner = compile(g, container)
+    out = runner.run({})
+    assert out["c"]["sum"] == 7
+""",
+    "test_llm_client.py": """from future import annotations
+
+from voide.llm_client import LLMClient
+
+def test_echo_backend_complete():
+    c = LLMClient({"backend": "echo"})
+    assert c.complete("hello") == "ECHO: hello"
+
+def test_fallback_when_backend_missing():
+    c = LLMClient({"backend": "openai"})
+    out = c.complete("hi")
+    assert out.startswith("ECHO:")
+
+    c2 = LLMClient({"backend": "llama_cpp", "model_path": "nonexistent.gguf"})
+    out2 = c2.complete("hi2")
+    assert out2.startswith("ECHO:")
+""",
+    "test_ops_prompt_llm.py": """from future import annotations
+
+from typing import Dict
+
+from voide.chunks.prompt import build as build_prompt
+from voide.chunks.llm import build as build_llm
+
+def make_container() -> Dict:
+    return {"ops": {}, "tools": {}, "config": {}}
+
+def test_prompt_renders():
+    c = make_container()
+    build_prompt(c)
+    op = c["ops"]["Prompt"]
+    msg = {"task": "reverse a string"}
+    cfg = {"template": "Summarize {task}"}
+    out = op(msg, cfg, c)
+    assert out["prompt"] == "Summarize reverse a string"
+
+def test_llm_echo_completion():
+    c = make_container()
+    build_llm(c)
+    op = c["ops"]["LLM"]
+    msg = {"prompt": "Say hi"}
+    out = op(msg, {"backend": "echo", "forward_input_with_response": True}, c)
+    assert out["completion"].startswith("ECHO:")
+    assert out.get("input") == msg
+""",
+    "test_memory_cache_log.py": """import os
+import time
+import json
+from pathlib import Path
+
+def test_memory_store(tmp_path, monkeypatch):
+    from voide.storage import MemoryStore
+    db = str(tmp_path / "mem.db")
+    ms = MemoryStore(db)
+    ms.upsert("k1", {"val": 1})
+    row = ms.get("k1")
+    assert row["val"] == 1
+    monkeypatch.setattr(time, "time", lambda: time.time() + 10)
+    assert ms.get("k1", ttl=1) is None
+
+def test_cache_op(tmp_path):
+    from voide.chunks.cache import op_cache
+    c = {"ops": {"Child": lambda m, cfg, ct: {"x": 1}}}
+    msg = {"prompt": "p"}
+    cfg = {"strategy": "prefer", "ttl_seconds": 5, "child": "Child", "child_config": {}}
+    out1 = op_cache(msg, cfg, c)
+    out2 = op_cache(msg, cfg, c)
+    assert out1 is out2
+    cfg["strategy"] = "refresh"
+    out3 = op_cache(msg, cfg, c)
+    assert out3 is not out2
+
+def test_log_op(tmp_path):
+    from voide.chunks.log import op_log
+    logf = tmp_path / "l.jsonl"
+    msg = {"a": 1}
+    cfg = {"path": str(logf)}
+    out = op_log(msg, cfg, {})
+    assert out.get("logged")
+    lines = logf.read_text().splitlines()
+    assert len(lines) == 1
+    rec = json.loads(lines[0])
+    assert rec["a"] == 1 and "timestamp" in rec
+"""
+}
+
+# Write test files
+for filename, content in tests.items():
+    path = os.path.join(tests_dir, filename)
+    with open(path, "w") as f:
+        f.write(content)
+
+print("Created test files:")
+for filename in sorted(tests.keys()):
+    print("-", filename)
+
