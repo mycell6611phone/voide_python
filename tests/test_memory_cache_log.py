@@ -28,7 +28,13 @@ def register_chunk(name: str, container: Dict[str, Any]):
 
 
 def test_memory_store(tmp_path, monkeypatch):
-    from voide.storage import MemoryStore
+    storage_spec = spec_from_file_location(
+        "voide.storage", Path("voide") / "storage.py"
+    )
+    storage_module = module_from_spec(storage_spec)
+    assert storage_spec and storage_spec.loader
+    storage_spec.loader.exec_module(storage_module)  # type: ignore[union-attr]
+    MemoryStore = storage_module.MemoryStore
 
     db = str(tmp_path / "mem.db")
     ms = MemoryStore(db)
@@ -38,8 +44,8 @@ def test_memory_store(tmp_path, monkeypatch):
     assert row["val"] == 1
 
     # advance time beyond TTL
-    base = time.time()
-    monkeypatch.setattr(time, "time", lambda: base + 10)
+    orig_time = storage_module.time.time
+    monkeypatch.setattr(storage_module.time, "time", lambda: orig_time() + 10)
     assert ms.get("k1", ttl=1) is None
 
 
@@ -56,8 +62,8 @@ def test_cache_op(monkeypatch):
     out1 = op(msg, cfg, container)
     out2 = op(msg, cfg, container)
     assert out1 is out2
-    base = mod.time.time()
-    monkeypatch.setattr(mod.time, "time", lambda: base + 10)
+    orig_time = mod.time.time
+    monkeypatch.setattr(mod.time, "time", lambda: orig_time() + 10)
     out3 = op(msg, cfg, container)
     assert out3 is not out2
     cfg["strategy"] = "refresh"

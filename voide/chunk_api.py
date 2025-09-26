@@ -10,7 +10,9 @@ All wiring happens inside build(). Import-time side effects are discouraged.
 """
 from __future__ import annotations
 
+import glob
 from dataclasses import dataclass
+from glob import glob as _glob
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 from types import ModuleType
@@ -82,7 +84,12 @@ def validate_and_meta(mod: ModuleType, path: Path) -> ChunkMeta:
 
 
 def scan_chunk_files(glob_pattern: str) -> List[Path]:
-    return sorted(Path().glob(glob_pattern))
+
+    """Return a sorted list of chunk files for the given glob pattern."""
+
+    if not glob_pattern:
+        return []
+    return sorted(Path(p) for p in _glob(glob_pattern))
 
 
 def topo_order(mods: List[Tuple[ModuleType, ChunkMeta]], initial_keys: Iterable[str]) -> List[Tuple[ModuleType, ChunkMeta]]:

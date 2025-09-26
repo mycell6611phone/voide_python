@@ -65,3 +65,47 @@ def build(container):
         msg = str(e)
         assert "X" in msg
 
+
+def test_assemble_default_loads_builtin_chunks():
+    container = assemble()
+    ops = container.get("ops", {})
+
+    assert "Prompt" in ops
+    assert "LLM" in ops
+    assert "llm_client" in container
+
+
+def test_hidden_chunks_are_skipped(tmp_path):
+    chunks = tmp_path / "chunks"
+    chunks.mkdir()
+
+    write_chunk(
+        chunks,
+        "public",
+        """
+provides = ["ops"]
+requires = []
+
+def build(container):
+    container.setdefault("ops", {})["Public"] = lambda *args, **kwargs: {"result": "ok"}
+""",
+    )
+
+    write_chunk(
+        chunks,
+        "_private",
+        """
+provides = ["ops"]
+requires = []
+
+def build(container):
+    container.setdefault("ops", {})["Hidden"] = lambda *args, **kwargs: {"result": "hidden"}
+""",
+    )
+
+    container = assemble(chunks_glob=str(chunks / "*.py"))
+    ops = container.get("ops", {})
+
+    assert "Public" in ops
+    assert "Hidden" not in ops
+

@@ -18,29 +18,36 @@ from .chunk_api import (
     validate_and_meta,
 )
 
-def assemble(chunks_glob: str = "workspace/chunks/*.py", config: Dict | None = None) -> Dict:
+
+DEFAULT_CHUNKS_GLOB = str((Path(__file__).resolve().parent.parent / "chunks" / "*.py"))
+
+def assemble(chunks_glob: str | None = None, config: Dict | None = None) -> Dict:
     """Assemble a container from chunk files.
 
     Args:
-        chunks_glob: Glob pattern of chunk python files.
+        chunks_glob: Glob pattern of chunk python files. Defaults to the
+            repository ``chunks`` directory when ``None``.
         config: Optional configuration dict, available at container["config"].
 
     Returns:
         container dict with registered objects.
     """
+    if chunks_glob is None:
+        chunks_glob = DEFAULT_CHUNKS_GLOB
+
     container: Dict = {"config": dict(config or {}), "ops": {}, "tools": {}}
 
     files = scan_chunk_files(chunks_glob)
     modules_meta: List[Tuple[object, ChunkMeta]] = []
     for p in files:
-        if Path(p).name.startswith("_"):
-            try:
-                mod = load_module(Path(p))
-                meta = validate_and_meta(mod, Path(p))
-            except Exception:
-                continue
-        mod = load_module(Path(p))
-        meta = validate_and_meta(mod, Path(p))
+        path = Path(p)
+        if path.name.startswith("_"):
+            # Hidden modules (prefixed with "_") are considered opt-in and
+            # should not be loaded by default.
+            continue
+
+        mod = load_module(path)
+        meta = validate_and_meta(mod, path)
         modules_meta.append((mod, meta))
 
     ordered = topo_order(modules_meta, initial_keys=container.keys())
