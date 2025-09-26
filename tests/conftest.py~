@@ -1,0 +1,31 @@
+<<<<<<< ours
+"""Test configuration ensuring the repository root is importable."""
+
+from __future__ import annotations
+
+import importlib
+=======
+"""Pytest configuration helpers."""
+
+from __future__ import annotations
+
+>>>>>>> theirs
+import sys
+from pathlib import Path
+
+
+<<<<<<< ours
+ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+chunks_module = importlib.import_module("chunks")
+voide_module = importlib.import_module("voide")
+setattr(voide_module, "chunks", chunks_module)
+sys.modules.setdefault("voide.chunks", chunks_module)
+
+=======
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+>>>>>>> theirs

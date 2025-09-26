@@ -1,0 +1,372 @@
+<<<<<<< ours
+"""LLM client facade with backend-specific adapters."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Any, Dict, Iterable, List, Mapping, MutableMapping, Optional
+
+try:  # pragma: no cover - exercised through injected stubs in tests
+    import openai  # type: ignore
+except Exception:  # pragma: no cover - absence covered by fallback tests
+    openai = None  # type: ignore
+
+try:  # pragma: no cover - exercised through injected stubs in tests
+    from llama_cpp import Llama  # type: ignore
+except Exception:  # pragma: no cover - absence covered by fallback tests
+    Llama = None  # type: ignore
+
+
+def _coerce_text(value: Any) -> str:
+    """Best-effort conversion of backend responses into a string."""
+
+    if value is None:
+        return ""
+
+    if isinstance(value, str):
+        return value
+
+    if hasattr(value, "output_text"):
+        output_text = getattr(value, "output_text")
+        return str(output_text() if callable(output_text) else output_text)
+
+    if hasattr(value, "text"):
+        text_value = getattr(value, "text")
+        return str(text_value() if callable(text_value) else text_value)
+
+    if hasattr(value, "content"):
+        content_value = getattr(value, "content")
+        return str(content_value() if callable(content_value) else content_value)
+
+    if hasattr(value, "choices"):
+        choices = getattr(value, "choices")
+        if callable(choices):
+            choices = choices()
+        if isinstance(choices, Iterable):
+            for choice in choices:
+                text = _coerce_text(choice)
+                if text:
+                    return text
+
+    if isinstance(value, Mapping):
+        if "output_text" in value:
+            return _coerce_text(value["output_text"])
+        if "text" in value:
+            return _coerce_text(value["text"])
+        if "content" in value:
+            return _coerce_text(value["content"])
+        if "message" in value:
+            return _coerce_text(value["message"])
+        if "choices" in value:
+            choices = value["choices"]
+            if isinstance(choices, Iterable):
+                for choice in choices:
+                    text = _coerce_text(choice)
+                    if text:
+                        return text
+
+    return str(value)
+
+
+class EchoAdapter:
+    """Simple adapter that echoes input back for deterministic tests."""
+
+    name = "echo"
+
+    def complete(self, prompt: str, max_tokens: Optional[int] = None) -> str:
+        _ = max_tokens  # Echo ignores the limit but keeps the signature uniform.
+        return f"ECHO: {prompt}"
+
+    def chat(
+        self, messages: List[Dict[str, Any]], max_tokens: Optional[int] = None
+    ) -> str:
+        _ = max_tokens
+        last = messages[-1] if messages else {}
+        parts = last.get("parts")
+        if isinstance(parts, list) and parts:
+            candidate = parts[-1]
+        else:
+            candidate = None
+        content = last.get("content") or last.get("text") or candidate or ""
+        return f"ECHO: {content}"
+
+
+class OpenAIAdapter:
+    """Adapter that delegates to the OpenAI Python SDK."""
+
+    name = "openai"
+
+    def __init__(
+        self,
+        *,
+        model: str,
+        client: Any | None = None,
+        api_key: str | None = None,
+    ) -> None:
+        if client is None:
+            if openai is None:  # pragma: no cover - import absence tested indirectly
+                raise RuntimeError("openai package is not available")
+            factory = getattr(openai, "OpenAI", None) or getattr(openai, "Client", None)
+            if factory is None:
+                raise RuntimeError("openai module does not expose an OpenAI client")
+            kwargs: Dict[str, Any] = {}
+            if api_key:
+                kwargs["api_key"] = api_key
+            client = factory(**kwargs)
+        self._client = client
+        self._model = model
+
+    def complete(self, prompt: str, max_tokens: Optional[int] = None) -> str:
+        response = self._client.responses.create(  # type: ignore[attr-defined]
+            model=self._model,
+            input=prompt,
+            max_output_tokens=max_tokens,
+        )
+        return _coerce_text(response)
+
+    def chat(
+        self, messages: List[Dict[str, Any]], max_tokens: Optional[int] = None
+    ) -> str:
+        response = self._client.responses.create(  # type: ignore[attr-defined]
+            model=self._model,
+            messages=messages,
+            max_output_tokens=max_tokens,
+        )
+        return _coerce_text(response)
+
+
+class LlamaCppAdapter:
+    """Adapter targeting the `llama_cpp` Python bindings."""
+
+    name = "llama_cpp"
+
+    def __init__(
+        self,
+        model_path: str,
+        *,
+        client: Any | None = None,
+        invocation_kwargs: Optional[MutableMapping[str, Any]] = None,
+    ) -> None:
+        if not model_path:
+            raise FileNotFoundError("model_path required for llama_cpp backend")
+        if client is None:
+            if Llama is None:  # pragma: no cover - import absence tested indirectly
+                raise RuntimeError("llama_cpp package is not available")
+            invocation_kwargs = invocation_kwargs or {}
+            client = Llama(model_path=model_path, **invocation_kwargs)
+        self._client = client
+
+    def complete(self, prompt: str, max_tokens: Optional[int] = None) -> str:
+        kwargs: Dict[str, Any] = {}
+        if max_tokens is not None:
+            kwargs["max_tokens"] = max_tokens
+
+        client = self._client
+        if callable(client):
+            response = client(prompt, **kwargs)
+        elif hasattr(client, "__call__"):
+            response = client.__call__(prompt, **kwargs)
+        elif hasattr(client, "complete"):
+            response = client.complete(prompt=prompt, **kwargs)
+        else:  # pragma: no cover - defensive branch
+            raise RuntimeError("llama_cpp client does not support completion calls")
+        return _coerce_text(response)
+
+    def chat(
+        self, messages: List[Dict[str, Any]], max_tokens: Optional[int] = None
+    ) -> str:
+        kwargs: Dict[str, Any] = {}
+        if max_tokens is not None:
+            kwargs["max_tokens"] = max_tokens
+
+        client = self._client
+        if hasattr(client, "create_chat_completion"):
+            response = client.create_chat_completion(messages=messages, **kwargs)
+        else:
+            prompt = messages[-1]["content"] if messages else ""
+            response = self.complete(prompt, max_tokens=max_tokens)
+            return response if isinstance(response, str) else _coerce_text(response)
+        return _coerce_text(response)
+=======
+"""LLM client abstractions and lightweight fallbacks."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any, Dict, List, Protocol
+
+
+class Adapter(Protocol):
+    """Protocol implemented by backend adapters."""
+
+    def complete(self, prompt: str, max_tokens: int | None = None) -> str:  # pragma: no cover - protocol
+        ...
+
+    def chat(self, messages: List[Dict[str, str]], max_tokens: int | None = None) -> str:  # pragma: no cover - protocol
+        ...
+
+
+class EchoAdapter:
+    """Fallback adapter that simply echoes the prompt back."""
+
+    def complete(self, prompt: str, max_tokens: int | None = None) -> str:
+        return f"ECHO: {prompt}"
+
+    def chat(self, messages: List[Dict[str, str]], max_tokens: int | None = None) -> str:
+        if not messages:
+            return "ECHO:"
+        return f"ECHO: {messages[-1].get('content', '')}"
+
+
+class OpenAIAdapter:
+    """Very small shim around the OpenAI client.
+
+    The adapter intentionally raises if the OpenAI SDK is unavailable so that callers
+    can gracefully fall back to the echo adapter during tests.
+    """
+
+    def __init__(self, model: str) -> None:
+        try:
+            import openai  # type: ignore
+        except Exception as exc:  # pragma: no cover - optional dependency
+            raise RuntimeError("openai package is required for the OpenAI backend") from exc
+        self._client = openai
+        self._model = model
+
+    def complete(self, prompt: str, max_tokens: int | None = None) -> str:  # pragma: no cover - requires openai
+        resp = self._client.Completion.create(model=self._model, prompt=prompt, max_tokens=max_tokens)
+        return (resp.get("choices") or [{}])[0].get("text", "")
+
+    def chat(self, messages: List[Dict[str, str]], max_tokens: int | None = None) -> str:  # pragma: no cover - requires openai
+        resp = self._client.ChatCompletion.create(model=self._model, messages=messages, max_tokens=max_tokens)
+        return (resp.get("choices") or [{}])[0].get("message", {}).get("content", "")
+
+
+class LlamaCppAdapter:
+    """Adapter for llama.cpp bindings."""
+
+    def __init__(self, model_path: str) -> None:
+        try:
+            from llama_cpp import Llama  # type: ignore
+        except Exception as exc:  # pragma: no cover - optional dependency
+            raise RuntimeError("llama_cpp backend unavailable without llama-cpp-python") from exc
+        self._llama = Llama(model_path=model_path)
+
+    def complete(self, prompt: str, max_tokens: int | None = None) -> str:  # pragma: no cover - requires llama_cpp
+        resp = self._llama(prompt, max_tokens=max_tokens or 128)
+        return (resp.get("choices") or [{}])[0].get("text", "")
+
+    def chat(self, messages: List[Dict[str, str]], max_tokens: int | None = None) -> str:  # pragma: no cover - requires llama_cpp
+        resp = self._llama.create_chat_completion(messages=messages, max_tokens=max_tokens or 128)
+        return (resp.get("choices") or [{}])[0].get("message", {}).get("content", "")
+>>>>>>> theirs
+
+
+@dataclass(slots=True)
+class LLMConfig:
+    backend: str = "echo"
+<<<<<<< ours
+    model_path: Optional[str] = None
+    model: Optional[str] = None
+    max_input_tokens: Optional[int] = 4096
+    max_response_tokens: Optional[int] = 512
+    forward_input_with_response: bool = False
+    api_key: Optional[str] = None
+    openai_client: Any | None = None
+    llama_client: Any | None = None
+    llama_invocation_kwargs: Dict[str, Any] = field(default_factory=dict)
+
+
+class LLMClient:
+    """Facade that selects a backend with graceful fallback to echo."""
+
+    def __init__(
+        self,
+        config: Dict[str, Any] | LLMConfig | None = None,
+        *,
+        fallback_to_echo: bool = True,
+    ) -> None:
+        cfg = config if isinstance(config, LLMConfig) else LLMConfig(**(config or {}))
+        self.config = cfg
+        self.backend = cfg.backend
+
+        try:
+            self._adapter = self._create_adapter(cfg)
+        except Exception:
+            if not fallback_to_echo:
+                raise
+            self.backend = "echo"
+            self._adapter = EchoAdapter()
+
+    def _create_adapter(self, cfg: LLMConfig) -> Any:
+        backend = cfg.backend.lower()
+        if backend == "echo":
+            self.backend = "echo"
+            return EchoAdapter()
+        if backend == "openai":
+            model = cfg.model or "gpt-4o-mini"
+            self.backend = "openai"
+            return OpenAIAdapter(
+                model=model,
+                client=cfg.openai_client,
+                api_key=cfg.api_key,
+            )
+        if backend == "llama_cpp":
+            self.backend = "llama_cpp"
+            return LlamaCppAdapter(
+                cfg.model_path or "",
+                client=cfg.llama_client,
+                invocation_kwargs=cfg.llama_invocation_kwargs,
+            )
+        raise ValueError(f"Unknown LLM backend: {cfg.backend}")
+
+    def complete(self, prompt: str) -> str:
+        return self._adapter.complete(str(prompt), self.config.max_response_tokens)
+
+    def chat(self, messages: List[Dict[str, Any]]) -> str:
+        return self._adapter.chat(messages, self.config.max_response_tokens)
+
+=======
+    model_path: str | None = None
+    model: str | None = None
+    max_input_tokens: int | None = 4096
+    max_response_tokens: int | None = 512
+    forward_input_with_response: bool = False
+
+
+class LLMClient:
+    """Facade that exposes completion/chat for a configured backend."""
+
+    def __init__(self, config: Dict[str, Any] | None = None, *, fallback_to_echo: bool = True) -> None:
+        cfg = LLMConfig(**(config or {}))
+        self.config = cfg
+        self.backend = cfg.backend
+        try:
+            self._adapter = self._build_adapter(cfg)
+        except Exception:
+            if not fallback_to_echo:
+                raise
+            self._adapter = EchoAdapter()
+            self.backend = "echo"
+
+    def _build_adapter(self, cfg: LLMConfig) -> Adapter:
+        if cfg.backend == "echo":
+            return EchoAdapter()
+        if cfg.backend == "openai":
+            model = cfg.model or "gpt-4o-mini"
+            return OpenAIAdapter(model)
+        if cfg.backend == "llama_cpp":
+            if not cfg.model_path:
+                raise FileNotFoundError("model_path required for llama_cpp backend")
+            return LlamaCppAdapter(cfg.model_path)
+        raise ValueError(f"Unknown backend: {cfg.backend}")
+
+    def complete(self, prompt: str) -> str:
+        return self._adapter.complete(prompt, self.config.max_response_tokens)
+
+    def chat(self, messages: List[Dict[str, str]]) -> str:
+        return self._adapter.chat(messages, self.config.max_response_tokens)
+
+
+__all__ = ["LLMClient", "LLMConfig"]
+>>>>>>> theirs

@@ -9,14 +9,26 @@ requires: list[str] = []
 
 
 def _render(template: str, message: Dict[str, Any]) -> str:
-# Minimal replacement: {task}
-return template.replace("{task}", str(message.get("task", "")))
+<<<<<<< ours
+    """Minimal replacement of the ``{task}`` placeholder."""
+=======
+    # Minimal replacement: {task}
+    return template.replace("{task}", str(message.get("task", "")))
+>>>>>>> theirs
 
+    return template.replace("{task}", str(message.get("task", "")))
 
+<<<<<<< ours
+
+def op_prompt(
+    message: Dict[str, Any], config: Dict[str, Any], container: Dict[str, Any]
+) -> Dict[str, Any]:
+=======
 def op_prompt(message: Dict[str, Any], config: Dict[str, Any], container: Dict[str, Any]) -> Dict[str, Any]:
-template = config.get("template", "{task}")
-return {"prompt": _render(template, message)}
+>>>>>>> theirs
+    template = config.get("template", "{task}")
+    return {"prompt": _render(template, message)}
 
 
 def build(container: Dict[str, Any]) -> None:
-container.setdefault("ops", {})["Prompt"] = op_prompt
+    container.setdefault("ops", {})["Prompt"] = op_prompt

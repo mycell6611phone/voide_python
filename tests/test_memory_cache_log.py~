@@ -1,5 +1,7 @@
-
-
+import json
+import time
+<<<<<<< ours
+=======
 import pytest
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
@@ -23,7 +25,7 @@ def register_chunk(name: str, container: Dict[str, Any]):
     module = load_chunk(name)
     module.build(container)
     return module
-
+>>>>>>> theirs
 
 
 def test_memory_store(tmp_path, monkeypatch):
@@ -35,12 +37,24 @@ def test_memory_store(tmp_path, monkeypatch):
 
     row = ms.get("k1")
     assert row["val"] == 1
+<<<<<<< ours
 
+    original_time = time.time()
+    monkeypatch.setattr(time, "time", lambda: original_time + 10)
+
+    # without TTL we should still see the record
+    assert ms.query("", k=5) == [{"val": 1}]
+    # but TTL-aware queries should filter expired records
+    assert ms.query("", k=5, ttl=5) == []
+    assert ms.get("k1", ttl=5) is None
+    # record removed after TTL get
+    assert ms.get("k1") is None
+=======
     # advance time beyond TTL
     base = time.time()
     monkeypatch.setattr(time, "time", lambda: base + 10)
     assert ms.get("k1", ttl=1) is None
-
+>>>>>>> theirs
 
 
 def test_cache_op(monkeypatch):
@@ -75,7 +89,25 @@ def test_memory_op_roundtrip():
     assert any(item.get("content") == "alpha" for item in read_out["results"])
 
 
+<<<<<<< ours
+def test_json_log_append(tmp_path):
+    from voide.storage import JSONLog
 
+    log_path = tmp_path / "events.jsonl"
+    log = JSONLog(log_path)
+    log.append({"a": 1})
+    log.append({"a": 2, "timestamp": "override"})
+
+    lines = log_path.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 2
+
+    first = json.loads(lines[0])
+    second = json.loads(lines[1])
+
+    assert first["a"] == 1
+    assert "timestamp" in first
+    assert second["timestamp"] == "override"
+=======
 def test_log_op(tmp_path):
     try:
         mod = load_chunk("log")
@@ -94,5 +126,5 @@ def test_log_op(tmp_path):
     assert len(lines) == 1
     rec = json.loads(lines[0])
     assert rec["a"] == 1 and "timestamp" in rec
-
+>>>>>>> theirs
 
