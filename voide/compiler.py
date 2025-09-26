@@ -23,14 +23,46 @@ class Runner:
             raise RuntimeError(f"Cannot run: graph has cycles: {e}") from e
 
         for node in nodes:
+            incoming = self._in_edges.get(node.id, [])
+
             # collect inputs for this node
             msg: Dict[str, Any] = {}
-            for e in self._in_edges.get(node.id, []):
-                prev = outputs.get(e.from_node, {})
-                if e.from_port in prev:
-                    msg[e.to_port] = prev[e.from_port]
-            # if no incoming edges, seed with the original payload
-            if not self._in_edges.get(node.id):
+            if incoming:
+                for edge in incoming:
+                    prev = outputs.get(edge.from_node)
+                    if prev is None:
+                        raise RuntimeError(
+                            f"Upstream node '{edge.from_node}' has not produced outputs"
+                        )
+
+                    if edge.from_port in prev:
+                        value = prev[edge.from_port]
+                    else:
+                        found = False
+                        source_node = self.graph.nodes.get(edge.from_node)
+                        if source_node and source_node.outputs:
+                            mapped_key = source_node.outputs.get(edge.from_port)
+                            if mapped_key is not None and mapped_key in prev:
+                                value = prev[mapped_key]
+                                found = True
+
+                        if not found and len(prev) == 1:
+                            value = next(iter(prev.values()))
+                            found = True
+
+                        if not found:
+                            raise RuntimeError(
+                                "Cannot map edge from port "
+                                f"'{edge.from_port}' in outputs of '{edge.from_node}'"
+                            )
+                    msg[edge.to_port] = value
+
+                if len(incoming) == 1:
+                    source_outputs = outputs[incoming[0].from_node]
+                    for key, value in source_outputs.items():
+                        msg.setdefault(key, value)
+            else:
+                # if no incoming edges, seed with the original payload
                 msg = dict(payload)
 
             # find the op to execute

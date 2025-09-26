@@ -89,7 +89,12 @@ def scan_chunk_files(glob_pattern: str) -> List[Path]:
 
     if not glob_pattern:
         return []
-    return sorted(Path(p) for p in _glob(glob_pattern))
+
+    paths = (
+        Path(p)
+        for p in _glob(glob_pattern, recursive=True)
+    )
+    return sorted(path for path in paths if path.is_file())
 
 
 def topo_order(mods: List[Tuple[ModuleType, ChunkMeta]], initial_keys: Iterable[str]) -> List[Tuple[ModuleType, ChunkMeta]]:

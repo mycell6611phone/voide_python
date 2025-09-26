@@ -14,3 +14,6 @@ The `voide` package houses the runtime primitives that power graph assembly and 
 ### Conventions
 - Keep public APIs stable: tests import `assemble`, `Graph`, and `Runner` directly.
 - When adding new chunk types, ensure `assemble.py` discovers them and exposes any new container keys.
+- `chunk_api.scan_chunk_files` now always runs recursive globs (`**`) correctly and filters to real files before sorting.
+- `compiler.Runner` maps edge ports by checking node `outputs` metadata and falls back to single-output inference; single inbound edges also expose the full upstream payload for convenience.
+- `llm_client.LLMClient` supports injecting stub `openai_client`/`llama_client` instances, so prefer dependency injection during tests or when wiring alternative adapters.
