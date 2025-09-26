@@ -1,4 +1,5 @@
-
+import json
+import time
 
 import pytest
 from importlib.util import module_from_spec, spec_from_file_location
@@ -74,25 +75,46 @@ def test_memory_op_roundtrip():
     read_out = op({}, {"mode": "read", "query": "alpha", "k": 5}, container)
     assert any(item.get("content") == "alpha" for item in read_out["results"])
 
+def test_json_log_append(tmp_path):
+    from voide.storage import JSONLog
+
+    log_path = tmp_path / "events.jsonl"
+    log = JSONLog(log_path)
+    log.append({"a": 1})
+    log.append({"a": 2, "timestamp": "override"})
+
+    contents = log_path.read_text(encoding="utf-8")
+    assert contents.endswith("\n")
+
+    lines = contents.splitlines()
+    assert len(lines) == 2
+
+    first = json.loads(lines[0])
+    second = json.loads(lines[1])
+
+    assert first["a"] == 1
+    assert "timestamp" in first
+    assert second["timestamp"] == "override"
 
 
 def test_log_op(tmp_path):
-    try:
-        mod = load_chunk("log")
-    except IndentationError:
-        pytest.skip("log chunk currently malformed; skip until restored")
-        return
     logf = tmp_path / "l.jsonl"
     container = make_container()
-    mod.build(container)
-    op = container["ops"].get("Log") or getattr(mod, "op_log")
+    register_chunk("log", container)
+
+    op = container["ops"]["Log"]
     msg = {"a": 1}
-    cfg = {"path": str(logf)}
+    cfg = {"path": str(logf), "extra": {"b": 2}}
     out = op(msg, cfg, container)
-    assert out.get("logged")
-    lines = logf.read_text().splitlines()
+
+    assert out == {"logged": True, "path": str(logf)}
+
+    contents = logf.read_text(encoding="utf-8")
+    assert contents.endswith("\n")
+
+    lines = contents.splitlines()
     assert len(lines) == 1
     rec = json.loads(lines[0])
-    assert rec["a"] == 1 and "timestamp" in rec
-
-
+    assert rec["a"] == 1
+    assert rec["b"] == 2
+    assert rec["timestamp"].endswith("Z")

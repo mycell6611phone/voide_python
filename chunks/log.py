@@ -1,56 +1,61 @@
-# File: workspace/chunks/log.py
+"""JSONL logging chunk."""
+
+from __future__ import annotations
+
+import json
+import time
+from pathlib import Path
+from typing import Any, Dict
+
+from voide.storage import JSONLog
 
 
+provides = ["ops"]
+requires: list[str] = []
+
+_LOGGER_CACHE_KEY = "logs"
 
 
-@dataclass
-class GraphState:
-nodes: List[NodeState]
-edges: List[EdgeState]
+def _get_logger(path: Path, container: Dict[str, Any]) -> JSONLog:
+    """Return a cached ``JSONLog`` instance for *path* within *container*."""
+
+    cache = container.setdefault(_LOGGER_CACHE_KEY, {})
+    key = str(path)
+    logger = cache.get(key)
+    if not isinstance(logger, JSONLog):
+        logger = JSONLog(path)
+        cache[key] = logger
+    return logger
 
 
+def op_log(message: Dict[str, Any], config: Dict[str, Any], container: Dict[str, Any]) -> Dict[str, Any]:
+    """Append *message* to the configured JSONL log file."""
+
+    if not isinstance(message, dict):
+        raise TypeError("log op expects message dict")
+
+    path_value = config.get("path")
+    if not path_value:
+        raise ValueError("log op requires 'path' in config")
+
+    path = Path(path_value).expanduser()
+    extra = config.get("extra") or {}
+    if not isinstance(extra, dict):
+        raise TypeError("log op expects config['extra'] to be a dict if provided")
+
+    record: Dict[str, Any] = {**extra, **message}
+    record.setdefault("timestamp", time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
+
+    # Ensure the payload is JSON serialisable before writing.
+    json.dumps(record, ensure_ascii=False)
+
+    logger = _get_logger(path, container)
+    logger.append(record)
+
+    return {"logged": True, "path": str(path)}
 
 
-def graph_to_state(g: Graph, positions: Dict[str, Tuple[int, int]]) -> GraphState:
-nodes: List[NodeState] = []
-for nid, n in g.nodes.items():
-x, y = positions.get(nid, (50, 50))
-nodes.append(NodeState(id=n.id, type_name=n.type_name, x=x, y=y, config=n.config))
-edges: List[EdgeState] = [EdgeState(e.from_node, e.from_port, e.to_node, e.to_port) for e in g.edges]
-return GraphState(nodes=nodes, edges=edges)
+def build(container: Dict[str, Any]) -> None:
+    """Register the Log op within *container*."""
 
-
-
-
-def state_to_graph(state: GraphState) -> tuple[Graph, Dict[str, Tuple[int, int]]]:
-g = Graph()
-pos: Dict[str, Tuple[int, int]] = {}
-for ns in state.nodes:
-g.add_node(Node(id=ns.id, type_name=ns.type_name, config=ns.config))
-pos[ns.id] = (ns.x, ns.y)
-for es in state.edges:
-g.add_edge(Edge(es.from_node, es.from_port, es.to_node, es.to_port))
-return g, pos
-
-
-
-
-def save_graph(path: str, g: Graph, positions: Dict[str, Tuple[int, int]]) -> None:
-state = graph_to_state(g, positions)
-payload = {
-"nodes": [asdict(n) for n in state.nodes],
-"edges": [asdict(e) for e in state.edges],
-}
-p = Path(path)
-p.parent.mkdir(parents=True, exist_ok=True)
-p.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-
-
-
-
-def load_graph(path: str) -> tuple[Graph, Dict[str, Tuple[int, int]]]:
-data = json.loads(Path(path).read_text(encoding="utf-8"))
-nodes = [NodeState(**nd) for nd in data.get("nodes", [])]
-edges = [EdgeState(**ed) for ed in data.get("edges", [])]
-from voide_ui.state import state_to_graph, GraphState # fix nested import
-return state_to_graph(GraphState(nodes=nodes, edges=edges))
+    container.setdefault("ops", {})["Log"] = op_log
