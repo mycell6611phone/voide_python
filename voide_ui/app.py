@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import tkinter as tk
 from tkinter import filedialog, messagebox
+from tkinter import font as tkfont
 from voide import assemble
 from voide.compiler import compile as compile_graph
 from voide_ui.canvas import GraphCanvas
@@ -24,12 +25,15 @@ LABEL_TO_TYPE = {
 class App(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
+        self._increase_font_sizes(15)
         self.title("VOIDE")
         self.geometry("1000x640")
         self.rowconfigure(0, weight=1)
         self.columnconfigure(1, weight=1)
 
+        self._configure_fonts()
         self._node_seq = 0
+        self._option_windows: dict[str, tk.Toplevel] = {}
 
         self._build_menu()
         self._build_toolbar()
@@ -39,6 +43,44 @@ class App(tk.Tk):
         self.chat = None  # type: ignore
 
     # ---- UI ----
+    def _configure_fonts(self) -> None:
+        for name in (
+            "TkDefaultFont",
+            "TkTextFont",
+            "TkFixedFont",
+            "TkMenuFont",
+            "TkHeadingFont",
+            "TkCaptionFont",
+            "TkSmallCaptionFont",
+            "TkIconFont",
+        ):
+            try:
+                f = tkfont.nametofont(name)
+            except tk.TclError:
+                continue
+            f.configure(size=f.cget("size") + 5)
+
+    def register_node(self, node_id: str) -> None:
+        if node_id.startswith("n"):
+            try:
+                val = int(node_id[1:])
+            except ValueError:
+                return
+            self._node_seq = max(self._node_seq, val)
+
+    def next_node_id(self) -> str:
+        self._node_seq += 1
+        return f"n{self._node_seq}"
+
+    def close_option_window(self, node_id: str) -> None:
+        win = self._option_windows.pop(node_id, None)
+        if win and win.winfo_exists():
+            win.destroy()
+
+    def _close_all_option_windows(self) -> None:
+        for nid in list(self._option_windows.keys()):
+            self.close_option_window(nid)
+
     def _build_menu(self):
         m = tk.Menu(self)
         sysm = tk.Menu(m, tearoff=False)
@@ -75,13 +117,18 @@ class App(tk.Tk):
 
         self.canvas = GraphCanvas(self, width=760, height=560)
         self.canvas.grid(row=1, column=1, sticky="nsew")
+
         self.canvas.bind("<Double-Button-1>", self._open_options_for_hit)
+        self.canvas.node_click_callback = self._on_canvas_node_click
+
 
     # ---- actions ----
     def _new(self):
+        self._close_all_option_windows()
         self.canvas.delete("all")
         self.canvas.nodes.clear()
         self.canvas.edges.clear()
+        self._node_seq = 0
 
     def _open(self):
         p = filedialog.askopenfilename(filetypes=[("VOIDE Graph", "*.json")])
@@ -103,8 +150,7 @@ class App(tk.Tk):
             return
         label = self.palette.get(sel[0])
         type_name = LABEL_TO_TYPE[label]
-        self._node_seq += 1
-        nid = f"n{self._node_seq}"
+        nid = self.next_node_id()
         self.canvas.add_node(nid, type_name, 60 + (self._node_seq % 5) * 40, 80 + (self._node_seq % 7) * 30, config={})
 
     def _open_options_for_hit(self, ev):
@@ -116,28 +162,34 @@ class App(tk.Tk):
                     self._open_options_for_node(nid)
                     return
 
+    def _on_node_click(self, event):
+        nid = getattr(event, "data", None)
+        if not nid:
+            return
+        if nid not in self.canvas.nodes:
+            return
+        self._open_options_for_node(nid)
+
     def _open_options_for_node(self, nid: str):
         nw = self.canvas.nodes[nid]
         t = nw.type_name
-        if t == "Prompt":
-            cfg = opt.prompt_options(self, nw.config)
-        elif t == "LLM":
-            cfg = opt.llm_options(self, nw.config)
-        elif t == "Memory":
-            cfg = opt.memory_options(self, nw.config)
-        elif t == "Cache":
-            cfg = opt.cache_options(self, nw.config)
-        elif t == "Log":
-            cfg = opt.log_options(self, nw.config)
-        elif t == "Divider":
-            cfg = opt.divider_options(self, nw.config)
-        elif t == "ToolCall":
-            cfg = opt.toolcall_options(self, nw.config)
-        elif t == "DebateLoop":
-            cfg = opt.debate_options(self, nw.config)
-        else:
-            cfg = dict(nw.config)
-        nw.config = cfg
+        if t == "UI":
+            self._open_chat()
+            return
+        existing = self._option_windows.get(nid)
+        if existing and existing.winfo_exists():
+            existing.lift()
+            existing.focus_force()
+            return
+
+        def on_apply(cfg: dict):
+            nw.config = cfg
+
+        def on_close() -> None:
+            self._option_windows.pop(nid, None)
+
+        win = opt.open_module_options(self, nid, t, dict(nw.config), on_apply, on_close)
+        self._option_windows[nid] = win
 
     def _ensure_chat(self):
         if self.chat is None or not self.chat.winfo_exists():
@@ -145,6 +197,10 @@ class App(tk.Tk):
 
     def _open_chat(self):
         self._ensure_chat()
+
+    def _on_canvas_node_click(self, node_id: str, node_widget):
+        if getattr(node_widget, "type_name", None) == "UI":
+            self._open_chat()
 
     def _build(self):
         container = assemble()
@@ -187,6 +243,33 @@ class App(tk.Tk):
             self.chat._send()
         else:
             self.chat.append_assistant("<no input>")
+
+    def _increase_font_sizes(self, delta: int) -> None:
+        font_names = (
+            "TkDefaultFont",
+            "TkTextFont",
+            "TkFixedFont",
+            "TkMenuFont",
+            "TkHeadingFont",
+            "TkCaptionFont",
+            "TkSmallCaptionFont",
+            "TkIconFont",
+            "TkTooltipFont",
+        )
+        for name in font_names:
+            try:
+                font = tkfont.nametofont(name)
+            except tk.TclError:
+                continue
+            size = font.cget("size")
+            try:
+                size_val = int(size)
+            except (TypeError, ValueError):
+                continue
+            if size_val < 0:
+                font.configure(size=size_val - delta)
+            else:
+                font.configure(size=size_val + delta)
 
 def launch():
     app = App()
