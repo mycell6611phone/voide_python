@@ -41,7 +41,11 @@ class App(tk.Tk):
         self._build_body()
 
         self.runner = None
-        self.chat = None  # type: ignore
+        self.chat: ChatWindow | None = None
+
+        # Instantiate the chat window immediately so it can be toggled without
+        # relying on recreation after it has been hidden.
+        self._ensure_chat().show()
 
     # ---- UI ----
     def _configure_fonts(self) -> None:
@@ -227,16 +231,30 @@ class App(tk.Tk):
         win = opt.open_module_options(self, nid, t, dict(nw.config), on_apply, on_close)
         self._option_windows[nid] = win
 
-    def _ensure_chat(self):
-        if self.chat is None or not self.chat.winfo_exists():
-            self.chat = ChatWindow(self, self._on_chat_send)
+    def _ensure_chat(self) -> ChatWindow:
+        chat = self.chat
+        exists = False
+        if chat is not None:
+            try:
+                exists = bool(chat.winfo_exists())
+            except tk.TclError:
+                exists = False
+        if not exists:
+            chat = ChatWindow(self, self._on_chat_send)
+            self.chat = chat
+        return chat
 
     def _open_chat(self):
-        self._ensure_chat()
+        chat = self._ensure_chat()
+        chat.show()
+
+    def _toggle_chat(self):
+        chat = self._ensure_chat()
+        chat.toggle()
 
     def _on_canvas_node_click(self, node_id: str, node_widget):
         if getattr(node_widget, "type_name", None) == "UI":
-            self._open_chat()
+            self._toggle_chat()
 
     def _build(self):
         container = assemble()
@@ -269,16 +287,18 @@ class App(tk.Tk):
                 break
         if completion is None:
             completion = "<no completion>"
-        self._ensure_chat()
-        self.chat.append_assistant(str(completion))
+        chat = self._ensure_chat()
+        chat.show()
+        chat.append_assistant(str(completion))
 
     def _run_once(self):
-        self._ensure_chat()
-        txt = self.chat.entry.get().strip() if self.chat and self.chat.winfo_exists() else ""
+        chat = self._ensure_chat()
+        chat.show()
+        txt = chat.entry.get().strip() if chat.winfo_exists() else ""
         if txt:
-            self.chat._send()
+            chat._send()
         else:
-            self.chat.append_assistant("<no input>")
+            chat.append_assistant("<no input>")
 
     def _increase_font_sizes(self, delta: int) -> None:
         font_names = (
