@@ -32,6 +32,7 @@ class App(tk.Tk):
         self.columnconfigure(1, weight=1)
 
         self._configure_fonts()
+        self._font_var = tk.StringVar(value=self._default_canvas_font())
         self._node_seq = 0
         self._option_windows: dict[str, tk.Toplevel] = {}
 
@@ -81,6 +82,23 @@ class App(tk.Tk):
         for nid in list(self._option_windows.keys()):
             self.close_option_window(nid)
 
+    def _default_canvas_font(self) -> str:
+        try:
+            return tkfont.nametofont("TkDefaultFont").cget("family")
+        except tk.TclError:
+            return "Arial"
+
+    def _set_canvas_font(self, family: str) -> None:
+        if not family:
+            return
+        self._font_var.set(family)
+        canvas = getattr(self, "canvas", None)
+        if canvas is not None and hasattr(canvas, "set_label_font_family"):
+            try:
+                canvas.set_label_font_family(family)
+            except tk.TclError:
+                pass
+
     def _build_menu(self):
         m = tk.Menu(self)
         sysm = tk.Menu(m, tearoff=False)
@@ -91,6 +109,22 @@ class App(tk.Tk):
         filem.add_command(label="New", command=self._new)
         filem.add_command(label="Open...", command=self._open)
         filem.add_command(label="Save As...", command=self._save_as)
+        fontm = tk.Menu(filem, tearoff=False)
+        font_options = [
+            ("Arial", "Arial"),
+            ("Courier New (monospace)", "Courier New"),
+            ("Helvetica", "Helvetica"),
+            ("Times New Roman", "Times New Roman"),
+            ("Verdana", "Verdana"),
+        ]
+        for label, family in font_options:
+            fontm.add_radiobutton(
+                label=label,
+                value=family,
+                variable=self._font_var,
+                command=lambda fam=family: self._set_canvas_font(fam),
+            )
+        filem.add_cascade(label="Canvas Font", menu=fontm)
         m.add_cascade(label="File", menu=filem)
 
         editm = tk.Menu(m, tearoff=False)
@@ -120,6 +154,8 @@ class App(tk.Tk):
 
         self.canvas.bind("<Double-Button-1>", self._open_options_for_hit)
         self.canvas.node_click_callback = self._on_canvas_node_click
+
+        self._set_canvas_font(self._font_var.get())
 
 
     # ---- actions ----

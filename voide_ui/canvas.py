@@ -72,6 +72,19 @@ class GraphCanvas(tk.Canvas):
         self.bind("<ButtonRelease-1>", self._on_up)
         self.bind("<ButtonPress-3>", self._on_context)
 
+    def set_label_font_family(self, family: str) -> None:
+        if not family:
+            return
+        try:
+            current = self._label_font.cget("family")
+        except tk.TclError:
+            current = None
+        if current == family:
+            return
+        self._label_font.configure(family=family)
+        for node in self.nodes.values():
+            self.itemconfigure(node.label, font=self._label_font)
+
     # ---- node/port helpers ----
     def add_node(self, node_id: str, type_name: str, x: int, y: int, config: dict | None = None):
         cfg = config or {}
