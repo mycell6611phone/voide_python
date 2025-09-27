@@ -179,6 +179,7 @@ class GraphCanvas(tk.Canvas):
     def _on_down(self, ev):
         self._click_target = None
         self._click_start = (ev.x, ev.y)
+        self._dragging = False
         hit = self.find_overlapping(ev.x, ev.y, ev.x, ev.y)
         # start connect if on a port
         pp = self.ports_at(ev.x, ev.y)
@@ -197,16 +198,15 @@ class GraphCanvas(tk.Canvas):
                     nid = tag.split(":", 1)[1]
                     nx, ny = self.nodes[nid].x, self.nodes[nid].y
 
-                    self._drag = (nid, ev.x - nx, ev.y - ny)
+                    self._drag = (nid, ev.x - nx, ev.y - ny, nx, ny)
                     self._click_target = nid
-                    self._dragging = True
 
                     return
 
     def _on_drag(self, ev):
         if self._drag:
 
-            nid, ox, oy = self._drag
+            nid, ox, oy, _start_x, _start_y = self._drag
             self._dragging = True
 
             self.move_node(nid, ev.x - ox, ev.y - oy)
@@ -219,6 +219,9 @@ class GraphCanvas(tk.Canvas):
 
     def _on_up(self, ev):
 
+        had_drag = self._dragging
+        self._dragging = False
+
         if self._drag:
             nid, _ox, _oy, start_x, start_y = self._drag
             moved = abs(self.nodes[nid].x - start_x) > 2 or abs(self.nodes[nid].y - start_y) > 2
@@ -227,7 +230,9 @@ class GraphCanvas(tk.Canvas):
                 self.node_click_callback(nid, self.nodes[nid])
             return
 
+        connection_active = False
         if self._connecting:
+            connection_active = True
             src_nid, src_port, line = self._connecting
             self._connecting = None
             hit = self.ports_at(ev.x, ev.y)
