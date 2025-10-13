@@ -1,5 +1,4 @@
 import json
-import time
 
 import pytest
 from importlib.util import module_from_spec, spec_from_file_location
@@ -50,25 +49,91 @@ def test_memory_store(tmp_path, monkeypatch):
 
 
 
-def test_cache_op(monkeypatch):
+def test_cache_sliding_window_and_prepend_modes():
     container = make_container()
     mod = register_chunk("cache", container)
     mod._cache.clear()
-    mod._timestamps.clear()
-    container["ops"]["Child"] = lambda m, cfg, ct: {"x": time.time()}
-    msg = {"prompt": "p"}
-    cfg = {"strategy": "prefer", "ttl_seconds": 5, "child": "Child", "child_config": {}}
     op = container["ops"]["Cache"]
-    out1 = op(msg, cfg, container)
-    out2 = op(msg, cfg, container)
-    assert out1 is out2
-    orig_time = mod.time.time
-    monkeypatch.setattr(mod.time, "time", lambda: orig_time() + 10)
-    out3 = op(msg, cfg, container)
-    assert out3 is not out2
-    cfg["strategy"] = "refresh"
-    out4 = op(msg, cfg, container)
-    assert out4 is not out3
+
+    cfg = {"cache_id": "primary", "max_passes": 3, "prepend_mode": True}
+
+    assert op({"stream_in": "A"}, cfg, container)["stream_out"] == ["A"]
+    assert op({"stream_in": "B"}, cfg, container)["stream_out"] == ["A", "B"]
+    assert op({"stream_in": "C"}, cfg, container)["stream_out"] == ["A", "B", "C"]
+    assert op({"stream_in": "D"}, cfg, container)["stream_out"] == ["B", "C", "D"]
+
+    cfg["prepend_mode"] = False
+    assert op({"stream_in": "E"}, cfg, container)["stream_out"] == ["E", "D", "C"]
+
+
+def test_cache_optional_input_toggle():
+    container = make_container()
+    mod = register_chunk("cache", container)
+    mod._cache.clear()
+    op = container["ops"]["Cache"]
+
+    cfg_enabled = {
+        "cache_id": "opt",
+        "max_passes": 4,
+        "enable_opt_in": True,
+    }
+
+    assert op({"opt_in": "X"}, cfg_enabled, container)["stream_out"] == ["X"]
+    assert op({"stream_in": "A"}, cfg_enabled, container)["stream_out"] == ["X", "A"]
+
+    cfg_disabled = {
+        "cache_id": "opt_disabled",
+        "max_passes": 4,
+        "enable_opt_in": False,
+    }
+
+    assert op({"opt_in": "Y"}, cfg_disabled, container)["stream_out"] == []
+    assert op({"stream_in": "B"}, cfg_disabled, container)["stream_out"] == ["B"]
+
+
+def test_cache_token_limit_and_clear_after():
+    container = make_container()
+    mod = register_chunk("cache", container)
+    mod._cache.clear()
+    op = container["ops"]["Cache"]
+
+    cfg = {
+        "cache_id": "limit",
+        "max_passes": 5,
+        "token_limit": 3,
+        "clear_after": 2,
+    }
+
+    assert op({"stream_in": "alpha beta"}, cfg, container)["stream_out"] == ["alpha beta"]
+    # exceeds token budget, retains only most recent entry
+    assert op({"stream_in": "gamma delta epsilon"}, cfg, container)["stream_out"] == [
+        "gamma delta epsilon"
+    ]
+
+    # clear_after triggers before adding the next entry
+    assert op({"stream_in": "zeta"}, cfg, container)["stream_out"] == ["zeta"]
+
+
+def test_cache_clear_on_build_and_separate_keys():
+    container = make_container()
+    mod = register_chunk("cache", container)
+    mod._cache.clear()
+    op = container["ops"]["Cache"]
+
+    cfg_a = {
+        "cache_id": "primary",
+        "max_passes": 3,
+        "clear_on_build": True,
+    }
+    cfg_b = {"cache_id": "secondary", "max_passes": 2}
+
+    assert op({"stream_in": "A"}, cfg_a, container)["stream_out"] == ["A"]
+    assert op({"stream_in": "B"}, cfg_b, container)["stream_out"] == ["B"]
+
+    # simulate workflow rebuild
+    mod.build(container)
+    assert op({}, cfg_a, container)["stream_out"] == []
+    assert op({}, cfg_b, container)["stream_out"] == ["B"]
 
 
 def test_memory_op_roundtrip():

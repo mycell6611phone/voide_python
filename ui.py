@@ -86,7 +86,11 @@ PORTS = {
     "Prompt": {"inputs": [], "outputs": ["prompt"]},
     "LLM": {"inputs": ["prompt"], "outputs": ["completion"]},
     "DebateLoop": {"inputs": ["task"], "outputs": ["completion"]},
-    "Cache": {"inputs": ["prompt"], "outputs": ["prompt"]},
+    "Cache": {
+        "inputs": ["stream_in"],
+        "optional_inputs": ["opt_in"],
+        "outputs": ["stream_out"],
+    },
     "Log": {"inputs": ["data"], "outputs": []},
     "Memory": {"inputs": ["data"], "outputs": ["results"]},
     "Divider": {"inputs": ["route"], "outputs": ["A", "B"]},
@@ -131,6 +135,15 @@ class GraphCanvas(tk.Canvas):
             cy = y + 30 + i * 16
             pid = self.create_oval(x - 6, cy - 6, x + 6, cy + 6, fill="#3b82f6", outline="", tags=(f"port_in:{node_id}:{name}",))
             in_ports[name] = pid
+        optional_inputs = spec.get("optional_inputs", [])
+        if optional_inputs:
+            opt_spacing = 20
+            base_x = x + w / 2 - opt_spacing * (len(optional_inputs) - 1) / 2
+            cy = y + h - 10
+            for idx, name in enumerate(optional_inputs):
+                cx = base_x + idx * opt_spacing
+                pid = self.create_oval(cx - 6, cy - 6, cx + 6, cy + 6, fill="#38bdf8", outline="", tags=(f"port_in:{node_id}:{name}",))
+                in_ports[name] = pid
         for i, name in enumerate(spec.get("outputs", [])):
             cy = y + 30 + i * 16
             pid = self.create_oval(x + w - 6, cy - 6, x + w + 6, cy + 6, fill="#22c55e", outline="", tags=(f"port_out:{node_id}:{name}",))
@@ -300,12 +313,62 @@ def memory_options(master: tk.Misc, current: Dict[str, Any] | None = None) -> Di
 
 def cache_options(master: tk.Misc, current: Dict[str, Any] | None = None) -> Dict[str, Any]:
     cfg = dict(current or {})
-    strategy = simpledialog.askstring("Cache Options", "Strategy (off|prefer|refresh):", initialvalue=cfg.get("strategy", "prefer"), parent=master)
-    if strategy is not None:
-        cfg["strategy"] = strategy
-    ttl = simpledialog.askinteger("Cache Options", "TTL seconds:", initialvalue=int(cfg.get("ttl_seconds", 300)), parent=master, minvalue=0)
-    if ttl is not None:
-        cfg["ttl_seconds"] = int(ttl)
+    max_passes = simpledialog.askinteger(
+        "Cache Options",
+        "Max passes to retain:",
+        initialvalue=int(cfg.get("max_passes", 3)),
+        parent=master,
+        minvalue=1,
+    )
+    if max_passes is not None:
+        cfg["max_passes"] = int(max_passes)
+
+    token_limit = simpledialog.askinteger(
+        "Cache Options",
+        "Token limit (0 for unlimited):",
+        initialvalue=int(cfg.get("token_limit", 0)),
+        parent=master,
+        minvalue=0,
+    )
+    if token_limit is not None:
+        cfg["token_limit"] = int(token_limit)
+
+    clear_after = simpledialog.askinteger(
+        "Cache Options",
+        "Clear after N passes (0 = never):",
+        initialvalue=int(cfg.get("clear_after", 0)),
+        parent=master,
+        minvalue=0,
+    )
+    if clear_after is not None:
+        cfg["clear_after"] = int(clear_after)
+
+    prepend = simpledialog.askstring(
+        "Cache Options",
+        "Place older packets before new ones? (y/n):",
+        initialvalue="y" if cfg.get("prepend_mode", True) else "n",
+        parent=master,
+    )
+    if prepend is not None:
+        cfg["prepend_mode"] = prepend.lower().startswith("y")
+
+    clear_on_build = simpledialog.askstring(
+        "Cache Options",
+        "Clear cache on workflow build? (y/n):",
+        initialvalue="n" if not cfg.get("clear_on_build") else "y",
+        parent=master,
+    )
+    if clear_on_build is not None:
+        cfg["clear_on_build"] = clear_on_build.lower().startswith("y")
+
+    enable_opt_in = simpledialog.askstring(
+        "Cache Options",
+        "Enable OPT IN port? (y/n):",
+        initialvalue="y" if cfg.get("enable_opt_in") else "n",
+        parent=master,
+    )
+    if enable_opt_in is not None:
+        cfg["enable_opt_in"] = enable_opt_in.lower().startswith("y")
     return cfg
 
 def log_options(master: tk.Misc, current: Dict[str, Any] | None = None) -> Dict[str, Any]:

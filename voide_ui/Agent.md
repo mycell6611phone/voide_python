@@ -2,6 +2,12 @@
 
 This package implements the Tkinter desktop application used to design and run VOIDE workflows.
 
+## Role in the Project Goal
+- **Goal 1:** `app.py` renders the module palette and spawns canvas nodes for selected chunks.
+- **Goal 2:** `canvas.py` manages drag-to-wire interactions and keeps graph edges in sync with the visual links.
+- **Goal 3:** The Build command invokes `voide.assemble`/`voide.compiler` with the current canvas layout.
+- **Goal 4:** The Play command streams runner output to the chat/console panes for live execution feedback.
+
 ## Components
 - `app.py` – orchestrates the palette, canvas, menus, persistence, and run controls.
 - `canvas.py` – provides the draggable node editor, wiring logic, and Graph ↔ canvas conversions.

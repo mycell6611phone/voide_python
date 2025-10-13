@@ -12,7 +12,11 @@ PORTS = {
     "Prompt": {"inputs": [], "outputs": ["prompt"]},
     "LLM": {"inputs": ["prompt"], "outputs": ["completion"]},
     "DebateLoop": {"inputs": ["task"], "outputs": ["completion"]},
-    "Cache": {"inputs": ["prompt"], "outputs": ["prompt"]},
+    "Cache": {
+        "inputs": ["stream_in"],
+        "optional_inputs": ["opt_in"],
+        "outputs": ["stream_out"],
+    },
     "Log": {"inputs": ["data"], "outputs": []},
     "Memory": {"inputs": ["data"], "outputs": ["results"]},
     "Divider": {"inputs": ["route"], "outputs": ["A", "B"]},
@@ -104,6 +108,16 @@ class GraphCanvas(tk.Canvas):
             pid = self.create_oval(x - 8, cy - 8, x + 8, cy + 8, fill="#3b82f6", outline="", tags=(f"port_in:{node_id}:{name}",))
             in_ports[name] = pid
             in_order.append(name)
+        optional_inputs = spec.get("optional_inputs", [])
+        if optional_inputs:
+            opt_spacing = 24
+            base_x = x + w / 2 - opt_spacing * (len(optional_inputs) - 1) / 2
+            cy = y + h - 16
+            for idx, name in enumerate(optional_inputs):
+                cx = base_x + idx * opt_spacing
+                pid = self.create_oval(cx - 8, cy - 8, cx + 8, cy + 8, fill="#38bdf8", outline="", tags=(f"port_in:{node_id}:{name}",))
+                in_ports[name] = pid
+                in_order.append(name)
         for i, name in enumerate(spec.get("outputs", [])):
             cy = y + PORT_START_Y + i * PORT_SPACING
             pid = self.create_oval(x + w - 8, cy - 8, x + w + 8, cy + 8, fill="#22c55e", outline="", tags=(f"port_out:{node_id}:{name}",))

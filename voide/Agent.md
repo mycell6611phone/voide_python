@@ -2,6 +2,12 @@
 
 The `voide` package houses the runtime primitives that power graph assembly and execution.
 
+## Role in the Project Goal
+- **Goal 1:** Provides metadata loaders that inform the palette about available modules.
+- **Goal 2:** `graph.py` validates edges and port mappings, enforcing the canvas wiring constraints.
+- **Goal 3:** `assemble.py` and `compiler.py` turn the canvas design into an executable runner when Build is pressed.
+- **Goal 4:** `compiler.Runner` and related helpers execute the data flow triggered by the Play button.
+
 ## Important Modules
 - `assemble.py` – loads chunk metadata, validates `provides`/`requires`, and builds the shared container.
 - `compiler.py` – converts serialized graphs into runnable pipelines with `Runner` objects.

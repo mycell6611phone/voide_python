@@ -70,7 +70,15 @@ class Runner:
             if not callable(op):
                 raise RuntimeError(f"Unknown op: {node.type_name}")
 
-            res = op(msg, node.config, self.container)
+            cfg = node.config
+            if not isinstance(cfg, dict):
+                cfg = {"_original": cfg}
+            if "_node_id" not in cfg:
+                cfg = dict(cfg)
+                cfg["_node_id"] = node.id
+                node.config = cfg
+
+            res = op(msg, cfg, self.container)
             if not isinstance(res, dict):
                 raise RuntimeError(f"Op must return dict, got {type(res)}")
 

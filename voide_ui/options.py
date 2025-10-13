@@ -169,21 +169,70 @@ class MemoryOptionsWindow(ModuleOptionsWindow):
 
 class CacheOptionsWindow(ModuleOptionsWindow):
     def _build_body(self) -> None:
-        self.strategy = tk.StringVar(value=self._config.get("strategy", "prefer"))
-        self.ttl = tk.IntVar(value=int(self._config.get("ttl_seconds", 300)))
+        self.max_passes = tk.IntVar(value=int(self._config.get("max_passes", 3)))
+        self.token_limit = tk.IntVar(value=int(self._config.get("token_limit", 0)))
+        self.clear_after = tk.IntVar(value=int(self._config.get("clear_after", 0)))
+        self.prepend_mode = tk.BooleanVar(value=bool(self._config.get("prepend_mode", True)))
+        self.clear_on_build = tk.BooleanVar(value=bool(self._config.get("clear_on_build", False)))
+        self.enable_opt_in = tk.BooleanVar(value=bool(self._config.get("enable_opt_in", False)))
 
-        self._label("Strategy (off|prefer|refresh)")
-        self._entry(self.strategy)
-        self._label("TTL seconds")
-        self._spinbox(self.ttl, from_=0, to=86400, increment=30)
+        self._label("Max passes to retain")
+        self._spinbox(self.max_passes, from_=1, to=100, increment=1)
+        self._label("Token limit (0 = unlimited)")
+        self._spinbox(self.token_limit, from_=0, to=100000, increment=50)
+        self._label("Clear after N passes (0 = never)")
+        self._spinbox(self.clear_after, from_=0, to=100, increment=1)
+
+        tk.Checkbutton(
+            self.body,
+            text="Place older packets before new ones",
+            variable=self.prepend_mode,
+            bg=BG_COLOR,
+            fg=LABEL_COLOR,
+            selectcolor=BG_COLOR,
+            activebackground=BG_COLOR,
+            activeforeground=LABEL_COLOR,
+        ).pack(anchor="w", pady=(0, 8))
+
+        tk.Checkbutton(
+            self.body,
+            text="Clear cache when workflow builds",
+            variable=self.clear_on_build,
+            bg=BG_COLOR,
+            fg=LABEL_COLOR,
+            selectcolor=BG_COLOR,
+            activebackground=BG_COLOR,
+            activeforeground=LABEL_COLOR,
+        ).pack(anchor="w", pady=(0, 8))
+
+        tk.Checkbutton(
+            self.body,
+            text="Enable OPT IN port",
+            variable=self.enable_opt_in,
+            bg=BG_COLOR,
+            fg=LABEL_COLOR,
+            selectcolor=BG_COLOR,
+            activebackground=BG_COLOR,
+            activeforeground=LABEL_COLOR,
+        ).pack(anchor="w", pady=(0, 12))
 
     def _collect(self) -> Dict:
         cfg = dict(self._config)
-        cfg["strategy"] = self.strategy.get().strip() or "prefer"
         try:
-            cfg["ttl_seconds"] = max(0, int(self.ttl.get()))
+            cfg["max_passes"] = max(1, int(self.max_passes.get()))
         except (TypeError, ValueError):
-            cfg["ttl_seconds"] = 0
+            cfg["max_passes"] = 1
+        try:
+            cfg["token_limit"] = max(0, int(self.token_limit.get()))
+        except (TypeError, ValueError):
+            cfg["token_limit"] = 0
+        try:
+            cfg["clear_after"] = max(0, int(self.clear_after.get()))
+        except (TypeError, ValueError):
+            cfg["clear_after"] = 0
+        cfg["prepend_mode"] = bool(self.prepend_mode.get())
+        cfg["clear_on_build"] = bool(self.clear_on_build.get())
+        cfg["enable_opt_in"] = bool(self.enable_opt_in.get())
         return cfg
 
 
