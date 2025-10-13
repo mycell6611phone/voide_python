@@ -101,6 +101,22 @@ def test_llama_cpp_adapter_delegation() -> None:
     assert stub_client.chat_completions == [{"messages": messages, "max_tokens": 21}]
 
 
+def test_llama_backend_accepts_dot_variant() -> None:
+    stub_client = _StubLlamaClient()
+    client = module.LLMClient(
+        {
+            "backend": "llama.cpp",
+            "model_path": "fake-model.gguf",
+            "llama_client": stub_client,
+            "max_response_tokens": 13,
+        }
+    )
+
+    assert client.backend == "llama.cpp"
+    assert client.complete("demo") == "llama completion"
+    assert stub_client.completions[-1]["max_tokens"] == 13
+
+
 def test_fallback_to_echo_when_adapter_errors(monkeypatch: pytest.MonkeyPatch) -> None:
     def raising_adapter(*_: Any, **__: Any) -> Any:
         raise RuntimeError("boom")

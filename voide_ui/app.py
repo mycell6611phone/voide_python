@@ -3,6 +3,7 @@ from __future__ import annotations
 import tkinter as tk
 from tkinter import filedialog, messagebox
 from tkinter import font as tkfont
+from typing import Any, Dict
 from voide import assemble
 from voide.compiler import compile as compile_graph
 from voide_ui.canvas import GraphCanvas
@@ -35,6 +36,7 @@ class App(tk.Tk):
         self._font_var = tk.StringVar(value=self._default_canvas_font())
         self._node_seq = 0
         self._option_windows: dict[str, tk.Toplevel] = {}
+        self._llm_settings: Dict[str, Any] | None = None
 
         self._build_menu()
         self._build_toolbar()
@@ -326,6 +328,9 @@ class App(tk.Tk):
                 font.configure(size=size_val - delta)
             else:
                 font.configure(size=size_val + delta)
+
+    def on_llm_settings_changed(self, config: Dict[str, Any]) -> None:
+        self._llm_settings = dict(config)
 
 def launch():
     app = App()

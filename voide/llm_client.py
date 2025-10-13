@@ -176,12 +176,13 @@ class LLMClient:
             self.backend = "echo"
 
     def _build_adapter(self, cfg: LLMConfig) -> Adapter:
-        if cfg.backend == "echo":
+        backend = (cfg.backend or "echo").replace(".", "_")
+        if backend == "echo":
             return EchoAdapter()
-        if cfg.backend == "openai":
+        if backend == "openai":
             model = cfg.model or "gpt-4o-mini"
             return OpenAIAdapter(model, client=cfg.openai_client)
-        if cfg.backend == "llama_cpp":
+        if backend == "llama_cpp":
             if cfg.llama_client is None and not cfg.model_path:
                 raise FileNotFoundError("model_path required for llama_cpp backend")
             return LlamaCppAdapter(cfg.model_path, client=cfg.llama_client)
