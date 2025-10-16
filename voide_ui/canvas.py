@@ -3,7 +3,7 @@ from __future__ import annotations
 import copy
 import tkinter as tk
 from tkinter import font as tkfont
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Dict, Tuple, List, Callable
 from voide.graph import Graph, Node, Edge
 
@@ -28,6 +28,10 @@ NODE_WIDTH = 180
 NODE_HEIGHT = 110
 PORT_SPACING = 24
 PORT_START_Y = 44
+PORT_RADIUS = 8
+OPTIONAL_PORT_SPACING = 24
+OPTIONAL_PORT_OFFSET_Y = 16
+LABEL_OFFSET_Y = 30
 
 @dataclass
 class NodeWidget:
@@ -42,6 +46,7 @@ class NodeWidget:
     out_ports: Dict[str, int]
     in_order: List[str]
     out_order: List[str]
+    optional_inputs: List[str] = field(default_factory=list)
 
 class GraphCanvas(tk.Canvas):
     def __init__(self, master: tk.Misc, **kw):
@@ -59,6 +64,17 @@ class GraphCanvas(tk.Canvas):
         self._context_menu_pos: tuple[float, float] | None = None
         self._label_font = tkfont.nametofont("TkDefaultFont").copy()
         self._label_font.configure(weight="bold")
+        try:
+            self._base_label_font_size = int(self._label_font.cget("size"))
+        except tk.TclError:
+            self._base_label_font_size = 12
+
+        self._scale = 1.0
+        self._min_scale = 0.5
+        self._max_scale = 2.5
+        self._origin_x = 0.0
+        self._origin_y = 0.0
+
         self._context_menu = tk.Menu(self, tearoff=False)
         self._context_menu.add_command(label="Cut", command=self._context_cut)
         self._context_menu.add_command(label="Copy", command=self._context_copy)
@@ -68,13 +84,15 @@ class GraphCanvas(tk.Canvas):
         self._context_menu.add_command(label="Reverse Inputs", command=self._context_reverse_inputs)
 
         self.node_click_callback: Callable[[str, NodeWidget], None] | None = None
-        self._label_font = tkfont.nametofont("TkDefaultFont").copy()
-        self._label_font.configure(weight="bold")
+        self._apply_font_to_labels()
 
         self.bind("<ButtonPress-1>", self._on_down)
         self.bind("<B1-Motion>", self._on_drag)
         self.bind("<ButtonRelease-1>", self._on_up)
         self.bind("<ButtonPress-3>", self._on_context)
+        self.bind("<Control-MouseWheel>", self._on_zoom)
+        self.bind("<Control-Button-4>", self._on_zoom_button)
+        self.bind("<Control-Button-5>", self._on_zoom_button)
 
     def set_label_font_family(self, family: str) -> None:
         if not family:
@@ -85,45 +103,189 @@ class GraphCanvas(tk.Canvas):
             current = None
         if current == family:
             return
-        self._label_font.configure(family=family)
+        try:
+            self._label_font.configure(family=family)
+        except tk.TclError:
+            return
+        self._apply_font_to_labels()
+
+    def _scale_length(self, value: float) -> float:
+        return value * self._scale
+
+    def _world_to_screen(self, x: float, y: float) -> tuple[float, float]:
+        return (x - self._origin_x) * self._scale, (y - self._origin_y) * self._scale
+
+    def _screen_to_world(self, x: float, y: float) -> tuple[float, float]:
+        return x / self._scale + self._origin_x, y / self._scale + self._origin_y
+
+    def _update_label_font_scale(self) -> None:
+        base = self._base_label_font_size
+        if base == 0:
+            return
+        if base > 0:
+            size = max(6, int(round(base * self._scale)))
+        else:
+            size = min(-6, int(round(base * self._scale)))
+        try:
+            self._label_font.configure(size=size)
+        except tk.TclError:
+            pass
+
+    def _apply_font_to_labels(self) -> None:
+        self._update_label_font_scale()
         for node in self.nodes.values():
             self.itemconfigure(node.label, font=self._label_font)
 
+    def _update_node_visuals(self, node_id: str) -> None:
+        if node_id not in self.nodes:
+            return
+        node = self.nodes[node_id]
+        sx, sy = self._world_to_screen(node.x, node.y)
+        w = self._scale_length(NODE_WIDTH)
+        h = self._scale_length(NODE_HEIGHT)
+
+        self.coords(node.rect, sx, sy, sx + w, sy + h)
+        self.coords(node.label, sx + w / 2, sy + self._scale_length(LABEL_OFFSET_Y))
+
+        radius = self._scale_length(PORT_RADIUS)
+        port_start = self._scale_length(PORT_START_Y)
+        port_spacing = self._scale_length(PORT_SPACING)
+
+        for idx, name in enumerate(node.in_order):
+            pid = node.in_ports.get(name)
+            if pid is None:
+                continue
+            cy = sy + port_start + idx * port_spacing
+            self.coords(pid, sx - radius, cy - radius, sx + radius, cy + radius)
+
+        if node.optional_inputs:
+            opt_spacing = self._scale_length(OPTIONAL_PORT_SPACING)
+            cy = sy + h - self._scale_length(OPTIONAL_PORT_OFFSET_Y)
+            base_cx = sx + w / 2 - opt_spacing * (len(node.optional_inputs) - 1) / 2
+            for idx, name in enumerate(node.optional_inputs):
+                pid = node.in_ports.get(name)
+                if pid is None:
+                    continue
+                cx = base_cx + idx * opt_spacing
+                self.coords(pid, cx - radius, cy - radius, cx + radius, cy + radius)
+
+        for idx, name in enumerate(node.out_order):
+            pid = node.out_ports.get(name)
+            if pid is None:
+                continue
+            cy = sy + port_start + idx * port_spacing
+            cx = sx + w
+            self.coords(pid, cx - radius, cy - radius, cx + radius, cy + radius)
+
     # ---- node/port helpers ----
-    def add_node(self, node_id: str, type_name: str, x: int, y: int, config: dict | None = None):
+    def add_node(
+        self,
+        node_id: str,
+        type_name: str,
+        x: float,
+        y: float,
+        config: dict | None = None,
+        *,
+        from_world: bool = False,
+    ):
         cfg = config or {}
-        w, h = NODE_WIDTH, NODE_HEIGHT
-        rect = self.create_rectangle(x, y, x + w, y + h, fill="#2b2d31", outline="#4e5157", width=2, tags=(f"node:{node_id}",))
-
-        label = self.create_text(x + w / 2, y + 30, text=type_name, fill="#e6e6e6", font=self._label_font)
-
-        # ports
         spec = PORTS.get(type_name, {"inputs": ["in"], "outputs": ["out"]})
         in_ports: Dict[str, int] = {}
         out_ports: Dict[str, int] = {}
-        in_order: List[str] = []
-        out_order: List[str] = []
-        for i, name in enumerate(spec.get("inputs", [])):
-            cy = y + PORT_START_Y + i * PORT_SPACING
-            pid = self.create_oval(x - 8, cy - 8, x + 8, cy + 8, fill="#3b82f6", outline="", tags=(f"port_in:{node_id}:{name}",))
+        in_order: List[str] = list(spec.get("inputs", []))
+        optional_inputs: List[str] = list(spec.get("optional_inputs", []))
+        out_order: List[str] = list(spec.get("outputs", []))
+
+        if from_world:
+            wx, wy = float(x), float(y)
+            sx, sy = self._world_to_screen(wx, wy)
+        else:
+            sx, sy = float(x), float(y)
+            wx, wy = self._screen_to_world(sx, sy)
+
+        w, h = self._scale_length(NODE_WIDTH), self._scale_length(NODE_HEIGHT)
+        rect = self.create_rectangle(
+            sx,
+            sy,
+            sx + w,
+            sy + h,
+            fill="#2b2d31",
+            outline="#4e5157",
+            width=2,
+            tags=(f"node:{node_id}",),
+        )
+
+        label = self.create_text(
+            sx + w / 2,
+            sy + self._scale_length(LABEL_OFFSET_Y),
+            text=type_name,
+            fill="#e6e6e6",
+            font=self._label_font,
+        )
+
+        radius = self._scale_length(PORT_RADIUS)
+        port_start = self._scale_length(PORT_START_Y)
+        port_spacing = self._scale_length(PORT_SPACING)
+
+        for idx, name in enumerate(in_order):
+            cy = sy + port_start + idx * port_spacing
+            pid = self.create_oval(
+                sx - radius,
+                cy - radius,
+                sx + radius,
+                cy + radius,
+                fill="#3b82f6",
+                outline="",
+                tags=(f"port_in:{node_id}:{name}",),
+            )
             in_ports[name] = pid
-            in_order.append(name)
-        optional_inputs = spec.get("optional_inputs", [])
+
         if optional_inputs:
-            opt_spacing = 24
-            base_x = x + w / 2 - opt_spacing * (len(optional_inputs) - 1) / 2
-            cy = y + h - 16
+            opt_spacing = self._scale_length(OPTIONAL_PORT_SPACING)
+            base_cx = sx + w / 2 - opt_spacing * (len(optional_inputs) - 1) / 2
+            cy = sy + h - self._scale_length(OPTIONAL_PORT_OFFSET_Y)
             for idx, name in enumerate(optional_inputs):
-                cx = base_x + idx * opt_spacing
-                pid = self.create_oval(cx - 8, cy - 8, cx + 8, cy + 8, fill="#38bdf8", outline="", tags=(f"port_in:{node_id}:{name}",))
+                cx = base_cx + idx * opt_spacing
+                pid = self.create_oval(
+                    cx - radius,
+                    cy - radius,
+                    cx + radius,
+                    cy + radius,
+                    fill="#38bdf8",
+                    outline="",
+                    tags=(f"port_in:{node_id}:{name}", "port_optional"),
+                )
                 in_ports[name] = pid
-                in_order.append(name)
-        for i, name in enumerate(spec.get("outputs", [])):
-            cy = y + PORT_START_Y + i * PORT_SPACING
-            pid = self.create_oval(x + w - 8, cy - 8, x + w + 8, cy + 8, fill="#22c55e", outline="", tags=(f"port_out:{node_id}:{name}",))
+
+        for idx, name in enumerate(out_order):
+            cy = sy + port_start + idx * port_spacing
+            cx = sx + w
+            pid = self.create_oval(
+                cx - radius,
+                cy - radius,
+                cx + radius,
+                cy + radius,
+                fill="#22c55e",
+                outline="",
+                tags=(f"port_out:{node_id}:{name}",),
+            )
             out_ports[name] = pid
-            out_order.append(name)
-        self.nodes[node_id] = NodeWidget(node_id, type_name, x, y, cfg, rect, label, in_ports, out_ports, in_order, out_order)
+
+        self.nodes[node_id] = NodeWidget(
+            node_id,
+            type_name,
+            wx,
+            wy,
+            cfg,
+            rect,
+            label,
+            in_ports,
+            out_ports,
+            in_order,
+            out_order,
+            optional_inputs,
+        )
+        self._apply_font_to_labels()
         if hasattr(self.master, "register_node"):
             try:
                 self.master.register_node(node_id)  # type: ignore[attr-defined]
@@ -210,9 +372,9 @@ class GraphCanvas(tk.Canvas):
             for tag in self.gettags(it):
                 if tag.startswith("node:"):
                     nid = tag.split(":", 1)[1]
-                    nx, ny = self.nodes[nid].x, self.nodes[nid].y
-
-                    self._drag = (nid, ev.x - nx, ev.y - ny, nx, ny)
+                    node = self.nodes[nid]
+                    wx, wy = self._screen_to_world(ev.x, ev.y)
+                    self._drag = (nid, wx - node.x, wy - node.y, node.x, node.y)
                     self._click_target = nid
 
                     return
@@ -223,7 +385,8 @@ class GraphCanvas(tk.Canvas):
             nid, ox, oy, _start_x, _start_y = self._drag
             self._dragging = True
 
-            self.move_node(nid, ev.x - ox, ev.y - oy)
+            wx, wy = self._screen_to_world(ev.x, ev.y)
+            self.move_node(nid, wx - ox, wy - oy)
         elif self._connecting:
             _, _, line = self._connecting
             x0, y0, *_ = self.coords(line)
@@ -238,7 +401,10 @@ class GraphCanvas(tk.Canvas):
 
         if self._drag:
             nid, _ox, _oy, start_x, start_y = self._drag
-            moved = abs(self.nodes[nid].x - start_x) > 2 or abs(self.nodes[nid].y - start_y) > 2
+            node = self.nodes[nid]
+            dx = abs(node.x - start_x) * self._scale
+            dy = abs(node.y - start_y) * self._scale
+            moved = dx > 2 or dy > 2
             self._drag = None
             if not moved and self.node_click_callback:
                 self.node_click_callback(nid, self.nodes[nid])
@@ -267,27 +433,59 @@ class GraphCanvas(tk.Canvas):
         self._click_target = None
         self._click_start = None
 
-    def move_node(self, node_id: str, x: int, y: int) -> None:
-        n = self.nodes[node_id]
-        dx, dy = x - n.x, y - n.y
-        self.move(n.rect, dx, dy)
-        self.move(n.label, dx, dy)
-        for pid in list(n.in_ports.values()) + list(n.out_ports.values()):
-            self.move(pid, dx, dy)
-        n.x, n.y = x, y
+    def _on_zoom(self, ev):
+        delta = getattr(ev, "delta", 0)
+        if delta == 0:
+            return "break"
+        direction = 1 if delta > 0 else -1
+        self._apply_zoom(direction, ev.x, ev.y)
+        return "break"
+
+    def _on_zoom_button(self, ev):
+        num = getattr(ev, "num", None)
+        if num is None:
+            return "break"
+        direction = 1 if num == 4 else -1
+        self._apply_zoom(direction, ev.x, ev.y)
+        return "break"
+
+    def _apply_zoom(self, direction: int, sx: float, sy: float) -> None:
+        if direction == 0:
+            return
+        factor = 1.1 if direction > 0 else 1 / 1.1
+        new_scale = max(self._min_scale, min(self._max_scale, self._scale * factor))
+        if abs(new_scale - self._scale) < 1e-6:
+            return
+        wx, wy = self._screen_to_world(sx, sy)
+        self._scale = new_scale
+        self._origin_x = wx - sx / self._scale
+        self._origin_y = wy - sy / self._scale
+        self._apply_font_to_labels()
+        for nid in list(self.nodes.keys()):
+            self._update_node_visuals(nid)
+        for nid in list(self.nodes.keys()):
+            self._update_edges_for_node(nid)
+        if self._connecting:
+            src_nid, src_port, line = self._connecting
+            if src_nid in self.nodes and src_port in self.nodes[src_nid].out_ports:
+                sx0, sy0 = self._port_center(self.nodes[src_nid].out_ports[src_port])
+                self.coords(line, sx0, sy0, sx, sy)
+
+    def move_node(self, node_id: str, x: float, y: float) -> None:
+        if node_id not in self.nodes:
+            return
+        node = self.nodes[node_id]
+        node.x = float(x)
+        node.y = float(y)
+        self._update_node_visuals(node_id)
         self._update_edges_for_node(node_id)
 
     def reverse_inputs(self, node_id: str) -> None:
         n = self.nodes.get(node_id)
         if not n or len(n.in_order) < 2:
             return
-        new_order = list(reversed(n.in_order))
-        for idx, name in enumerate(new_order):
-            pid = n.in_ports[name]
-            cx, _ = self._port_center(pid)
-            cy = n.y + PORT_START_Y + idx * PORT_SPACING
-            self.coords(pid, cx - 8, cy - 8, cx + 8, cy + 8)
-        n.in_order = new_order
+        n.in_order = list(reversed(n.in_order))
+        self._update_node_visuals(node_id)
         self._update_edges_for_node(node_id)
 
     # ---- context menu ----
@@ -339,10 +537,11 @@ class GraphCanvas(tk.Canvas):
             return
         pos = self._context_menu_pos or (80, 80)
         cx, cy = pos
+        wx, wy = self._screen_to_world(cx, cy)
         self._paste_count += 1
         offset = (self._paste_count % 5) * 20
-        x = int(cx - NODE_WIDTH / 2 + offset)
-        y = int(cy - NODE_HEIGHT / 2 + offset)
+        x = wx - NODE_WIDTH / 2 + offset
+        y = wy - NODE_HEIGHT / 2 + offset
         if hasattr(self.master, "next_node_id"):
             try:
                 new_id = self.master.next_node_id()  # type: ignore[attr-defined]
@@ -350,7 +549,14 @@ class GraphCanvas(tk.Canvas):
                 new_id = self._generate_local_id()
         else:
             new_id = self._generate_local_id()
-        self.add_node(new_id, self._clipboard["type"], x, y, config=copy.deepcopy(self._clipboard.get("config", {})))
+        self.add_node(
+            new_id,
+            self._clipboard["type"],
+            x,
+            y,
+            config=copy.deepcopy(self._clipboard.get("config", {})),
+            from_world=True,
+        )
 
     def _generate_local_id(self) -> str:
         base = 1
@@ -387,7 +593,7 @@ class GraphCanvas(tk.Canvas):
         self.edges.clear()
         for nid, node in g.nodes.items():
             x, y = positions.get(nid, (50, 50))
-            self.add_node(nid, node.type_name, x, y, node.config)
+            self.add_node(nid, node.type_name, x, y, node.config, from_world=True)
         for e in g.edges:
             a = self.nodes[e.from_node]
             b = self.nodes[e.to_node]
