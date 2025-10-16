@@ -127,7 +127,12 @@ def load_llama_models_from_file(path: Path) -> List[Dict[str, Any]]:
 
     models: List[Dict[str, Any]] = []
     for entry in _collect_entries(raw):
-        if entry.get("adapter") != LLAMA_ADAPTER_NAME:
+        adapter = entry.get("adapter")
+        if adapter is None:
+            filename = entry.get("filename")
+            if isinstance(filename, str) and filename.lower().endswith(".gguf"):
+                adapter = LLAMA_ADAPTER_NAME
+        if adapter != LLAMA_ADAPTER_NAME:
             continue
         normalized = dict(entry)
         name = normalized.get("name") or normalized.get("filename") or "Unnamed model"

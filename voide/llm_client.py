@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Dict, List, Protocol
 
 
@@ -147,6 +149,69 @@ class LlamaCppAdapter:
         return (resp.get("choices") or [{}])[0].get("message", {}).get("content", "")
 
 
+class Gpt4AllAdapter:
+    """Adapter for GPT4All bindings."""
+
+    def __init__(self, model: str | None, model_path: str | None, client: Any | None = None) -> None:
+        if client is None:
+            name = model or (Path(model_path).stem if model_path else None)
+            if not name:
+                raise ValueError("model required for gpt4all backend")
+            try:
+                from gpt4all import GPT4All  # type: ignore
+            except Exception as exc:  # pragma: no cover - optional dependency
+                raise RuntimeError("gpt4all backend unavailable without gpt4all package") from exc
+            kwargs: Dict[str, Any] = {}
+            if model_path:
+                kwargs["model_path"] = str(Path(model_path).expanduser())
+            client = GPT4All(name, **kwargs)
+        self._client = client
+
+    def complete(self, prompt: str, max_tokens: int | None = None) -> str:  # pragma: no cover - optional dependency
+        if hasattr(self._client, "generate"):
+            kwargs: Dict[str, Any] = {}
+            if max_tokens is not None:
+                kwargs["max_tokens"] = max_tokens
+            result = self._client.generate(prompt, **kwargs)
+            return str(result)
+        if callable(self._client):
+            result = self._client(prompt, max_tokens=max_tokens)
+            if isinstance(result, str):
+                return result
+            if isinstance(result, dict):
+                text = result.get("text") or result.get("content")
+                if isinstance(text, str):
+                    return text
+            return str(result)
+        raise RuntimeError("GPT4All client does not expose a supported completion API")
+
+    def chat(self, messages: List[Dict[str, str]], max_tokens: int | None = None) -> str:  # pragma: no cover - optional dependency
+        if hasattr(self._client, "chat_completion"):
+            kwargs: Dict[str, Any] = {}
+            if max_tokens is not None:
+                kwargs["max_tokens"] = max_tokens
+            resp = self._client.chat_completion(messages, **kwargs)
+            if isinstance(resp, dict):
+                choices = resp.get("choices") or []
+                if choices:
+                    first = choices[0]
+                    if isinstance(first, dict):
+                        message = first.get("message")
+                        if isinstance(message, dict):
+                            content = message.get("content")
+                            if isinstance(content, str):
+                                return content
+                        content = first.get("text")
+                        if isinstance(content, str):
+                            return content
+                if "message" in resp and isinstance(resp["message"], str):
+                    return resp["message"]
+            if isinstance(resp, str):
+                return resp
+        last = messages[-1]["content"] if messages else ""
+        return self.complete(last, max_tokens)
+
+
 @dataclass(slots=True)
 class LLMConfig:
     backend: str = "echo"
@@ -158,6 +223,8 @@ class LLMConfig:
     forward_input_with_response: bool = False
     openai_client: Any | None = None
     llama_client: Any | None = None
+    gpt4all_client: Any | None = None
+    openai_api_key: str | None = None
 
 
 class LLMClient:
@@ -180,12 +247,18 @@ class LLMClient:
         if backend == "echo":
             return EchoAdapter()
         if backend == "openai":
+            if cfg.openai_api_key:
+                os.environ["OPENAI_API_KEY"] = cfg.openai_api_key
             model = cfg.model or "gpt-4o-mini"
             return OpenAIAdapter(model, client=cfg.openai_client)
         if backend == "llama_cpp":
             if cfg.llama_client is None and not cfg.model_path:
                 raise FileNotFoundError("model_path required for llama_cpp backend")
             return LlamaCppAdapter(cfg.model_path, client=cfg.llama_client)
+        if backend == "gpt4all":
+            if cfg.gpt4all_client is None and not (cfg.model or cfg.model_path):
+                raise FileNotFoundError("model or model_path required for gpt4all backend")
+            return Gpt4AllAdapter(cfg.model, cfg.model_path, client=cfg.gpt4all_client)
         raise ValueError(f"Unknown backend: {cfg.backend}")
 
     def complete(self, prompt: str) -> str:

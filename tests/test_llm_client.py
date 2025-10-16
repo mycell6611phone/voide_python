@@ -41,6 +41,20 @@ class _StubLlamaClient:
         return {"choices": [{"message": {"content": "llama chat"}}]}
 
 
+class _StubGpt4AllClient:
+    def __init__(self) -> None:
+        self.generations: List[Dict[str, Any]] = []
+        self.chats: List[Dict[str, Any]] = []
+
+    def generate(self, prompt: str, **kwargs: Any) -> str:
+        self.generations.append({"prompt": prompt, **kwargs})
+        return "gpt4all completion"
+
+    def chat_completion(self, messages: List[Dict[str, Any]], **kwargs: Any) -> Dict[str, Any]:
+        self.chats.append({"messages": messages, **kwargs})
+        return {"choices": [{"message": {"content": "gpt4all chat"}}]}
+
+
 def test_echo_backend_complete_and_chat() -> None:
     client = module.LLMClient({"backend": "echo"})
     assert client.complete("hello") == "ECHO: hello"
@@ -142,3 +156,30 @@ def test_missing_llama_model_path_triggers_echo_fallback() -> None:
     client = module.LLMClient({"backend": "llama_cpp"})
     assert client.backend == "echo"
     assert client.complete("just echo").startswith("ECHO:")
+
+
+def test_gpt4all_adapter_delegation() -> None:
+    stub_client = _StubGpt4AllClient()
+    client = module.LLMClient(
+        {
+            "backend": "gpt4all",
+            "model": "custom-model",
+            "model_path": "/models/custom-model.gguf",
+            "gpt4all_client": stub_client,
+            "max_response_tokens": 55,
+        }
+    )
+
+    assert client.backend == "gpt4all"
+    assert client.complete("Say hi") == "gpt4all completion"
+    assert stub_client.generations == [{"prompt": "Say hi", "max_tokens": 55}]
+
+    messages = [{"role": "user", "content": "chat please"}]
+    assert client.chat(messages) == "gpt4all chat"
+    assert stub_client.chats == [{"messages": messages, "max_tokens": 55}]
+
+
+def test_missing_gpt4all_model_info_triggers_echo_fallback() -> None:
+    client = module.LLMClient({"backend": "gpt4all"})
+    assert client.backend == "echo"
+    assert client.complete("fallback").startswith("ECHO:")
