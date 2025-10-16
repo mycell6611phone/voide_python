@@ -33,8 +33,8 @@ PORT_START_Y = 44
 class NodeWidget:
     id: str
     type_name: str
-    x: int
-    y: int
+    x: float
+    y: float
     config: dict
     rect: int
     label: int
@@ -48,7 +48,7 @@ class GraphCanvas(tk.Canvas):
         super().__init__(master, background="#1e1f22", highlightthickness=0, **kw)
         self.nodes: Dict[str, NodeWidget] = {}
         self.edges: List[tuple[str, str, str, str, int]] = []  # (from_id, from_port, to_id, to_port, line_id)
-        self._drag: tuple[str, int, int, int, int] | None = None
+        self._drag: tuple[str, float, float, float, float] | None = None
         self._connecting: tuple[str, str, int] | None = None  # node_id, port_name, tmp_line_id
         self._dragging = False
         self._click_target: str | None = None
@@ -56,7 +56,7 @@ class GraphCanvas(tk.Canvas):
         self._clipboard: dict | None = None
         self._paste_count = 0
         self._context_target: str | None = None
-        self._context_menu_pos: tuple[int, int] | None = None
+        self._context_menu_pos: tuple[float, float] | None = None
         self._label_font = tkfont.nametofont("TkDefaultFont").copy()
         self._label_font.configure(weight="bold")
         self._context_menu = tk.Menu(self, tearoff=False)
